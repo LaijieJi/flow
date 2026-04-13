@@ -51,9 +51,9 @@ class Habit:
         if parsed == "weekdays":
             return day.weekday() < 5
         if parsed == "weekly":
-            # Weekly habits are 'scheduled' every day of the week — caller
-            # decides whether it's been done this week. Keep simple for v1.
-            return True
+            # v1: weekly habits are scheduled on Mondays only. Simple + makes
+            # momentum scoring well-defined. Revisit when week-anchoring is needed.
+            return day.weekday() == 0
         assert isinstance(parsed, set)
         return day.weekday() in parsed
 
