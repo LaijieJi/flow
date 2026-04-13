@@ -186,6 +186,33 @@ def archive_habit(conn: sqlite3.Connection, habit_id: int, when: date | None = N
     return cur.rowcount > 0
 
 
+def update_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
+    """Persist edits to an existing habit. Validates frequency. Requires `habit.id`."""
+    if habit.id is None:
+        raise ValueError("update_habit requires habit.id")
+    parse_frequency(habit.frequency)
+    cur = conn.execute(
+        "UPDATE habits SET name = ?, description = ?, frequency = ?, unit = ?, target = ? "
+        "WHERE id = ?",
+        (habit.name, habit.description, habit.frequency, habit.unit, habit.target, habit.id),
+    )
+    if cur.rowcount == 0:
+        raise LookupError(f"habit id {habit.id} not found")
+    return habit
+
+
+def find_habit_by_name(
+    conn: sqlite3.Connection, name: str, include_archived: bool = True
+) -> Habit | None:
+    """Case-insensitive exact-name lookup. Returns first match or None."""
+    sql = "SELECT * FROM habits WHERE LOWER(name) = LOWER(?)"
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    sql += " LIMIT 1"
+    row = conn.execute(sql, (name,)).fetchone()
+    return _row_to_habit(row) if row else None
+
+
 # ---- completion CRUD -----------------------------------------------------------
 
 
@@ -232,6 +259,58 @@ def completions_for_habit(
     sql += " ORDER BY date"
     rows = conn.execute(sql, params).fetchall()
     return [_row_to_completion(r) for r in rows]
+
+
+def all_completions(
+    conn: sqlite3.Connection,
+    since: date | None = None,
+    until: date | None = None,
+    habit_id: int | None = None,
+) -> list[tuple[Completion, Habit]]:
+    """Completions across all habits, optionally filtered. Returns (completion,
+    habit) pairs ordered by date descending then habit id."""
+    sql = (
+        "SELECT c.*, h.name AS h_name, h.description AS h_description, "
+        "h.frequency AS h_frequency, h.unit AS h_unit, h.target AS h_target, "
+        "h.created_at AS h_created_at, h.archived_at AS h_archived_at "
+        "FROM completions c JOIN habits h ON h.id = c.habit_id"
+    )
+    clauses: list[str] = []
+    params: list = []
+    if since is not None:
+        clauses.append("c.date >= ?")
+        params.append(since)
+    if until is not None:
+        clauses.append("c.date <= ?")
+        params.append(until)
+    if habit_id is not None:
+        clauses.append("c.habit_id = ?")
+        params.append(habit_id)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY c.date DESC, c.habit_id ASC"
+    rows = conn.execute(sql, params).fetchall()
+    out: list[tuple[Completion, Habit]] = []
+    for r in rows:
+        completion = Completion(
+            id=r["id"],
+            habit_id=r["habit_id"],
+            date=r["date"],
+            value=r["value"],
+            note=r["note"],
+        )
+        habit = Habit(
+            id=r["habit_id"],
+            name=r["h_name"],
+            description=r["h_description"],
+            frequency=r["h_frequency"],
+            unit=r["h_unit"],
+            target=r["h_target"],
+            created_at=r["h_created_at"],
+            archived_at=r["h_archived_at"],
+        )
+        out.append((completion, habit))
+    return out
 
 
 def completions_on(conn: sqlite3.Connection, on: date) -> list[Completion]:

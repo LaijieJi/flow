@@ -7,7 +7,7 @@ scripting-friendly: exit codes are stable, output is plain when possible.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable
 
 import click
@@ -201,6 +201,106 @@ def list_cmd(show_all: bool, window: int) -> None:
                 row.append(h.archived_at.isoformat() if h.archived_at else "")
             table.add_row(*row)
 
+        console.print(table)
+
+
+@main.command(help="Edit an existing habit. Pass empty string to clear a field.")
+@click.argument("habit")
+@click.option("--name", default=None, help="rename the habit")
+@click.option("--frequency", "-f", default=None, help="daily | weekdays | weekly | mon,wed,fri")
+@click.option("--unit", default=None, help="e.g. minutes, pages (empty string clears)")
+@click.option("--target", default=None, help="numeric target (empty string clears)")
+@click.option("--description", "-d", default=None, help="short description (empty string clears)")
+def edit(
+    habit: str,
+    name: str | None,
+    frequency: str | None,
+    unit: str | None,
+    target: str | None,
+    description: str | None,
+) -> None:
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+
+        no_flags = all(
+            v is None for v in (name, frequency, unit, target, description)
+        )
+        if no_flags:
+            initial = h.description or ""
+            edited = click.edit(text=initial, require_save=True, extension=".txt")
+            if edited is None:
+                console.print("[dim]no changes[/dim]")
+                return
+            h.description = edited.strip() or None
+        else:
+            if name is not None:
+                if not name.strip():
+                    raise click.ClickException("--name cannot be empty")
+                if name.lower() != h.name.lower():
+                    clash = db.find_habit_by_name(conn, name)
+                    if clash is not None and clash.id != h.id:
+                        raise click.ClickException(f"habit named {name!r} already exists")
+                h.name = name
+            if frequency is not None:
+                try:
+                    parse_frequency(frequency)
+                except ValueError as e:
+                    raise click.ClickException(str(e))
+                h.frequency = frequency
+            if unit is not None:
+                h.unit = unit or None
+            if target is not None:
+                if target == "":
+                    h.target = None
+                else:
+                    try:
+                        h.target = float(target)
+                    except ValueError:
+                        raise click.ClickException(f"invalid --target {target!r}")
+            if description is not None:
+                h.description = description or None
+            if h.target is not None and h.unit is None:
+                raise click.ClickException("--target requires --unit")
+
+        db.update_habit(conn, h)
+
+    console.print(f"[green]updated[/green] {h.name}")
+
+
+@main.command(help="Completion history (newest first).")
+@click.option("--habit", default=None, help="filter to a single habit")
+@click.option(
+    "--days", type=int, default=30, show_default=True, help="lookback window in days"
+)
+def log(habit: str | None, days: int) -> None:
+    if days <= 0:
+        raise click.ClickException("--days must be positive")
+    since = date.today() - timedelta(days=days - 1)
+
+    with db.session() as conn:
+        habit_id: int | None = None
+        if habit is not None:
+            habit_id = _resolve_habit(conn, habit, include_archived=True).id
+        pairs = db.all_completions(conn, since=since, habit_id=habit_id)
+
+        if not pairs:
+            console.print("[dim]no completions in window[/dim]")
+            return
+
+        table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+        table.add_column("date", style="dim")
+        table.add_column("habit")
+        table.add_column("value", justify="right")
+        table.add_column("note", style="dim")
+
+        for c, h in pairs:
+            if c.value is not None:
+                val = f"{c.value:g}"
+                if h.unit:
+                    val += f" {h.unit}"
+            else:
+                val = "✓"
+            table.add_row(c.date.isoformat(), h.name, val, c.note or "")
         console.print(table)
 
 

@@ -257,3 +257,178 @@ def test_archive_nonexistent_errors(runner: CliRunner, db_path: Path) -> None:
     runner.invoke(main, ["add", "Real"])
     r = runner.invoke(main, ["archive", "Imaginary"])
     assert r.exit_code != 0
+
+
+# ---- edit ---------------------------------------------------------------------
+
+
+def test_edit_rename(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["edit", "Exercise", "--name", "Morning Exercise"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.name == "Morning Exercise"
+
+
+def test_edit_rename_same_name_allowed(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["edit", "Exercise", "--name", "exercise"])
+    assert r.exit_code == 0
+
+
+def test_edit_rename_to_duplicate_rejected(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "A"])
+    runner.invoke(main, ["add", "B"])
+    r = runner.invoke(main, ["edit", "A", "--name", "B"])
+    assert r.exit_code != 0
+    assert "already exists" in r.output
+
+
+def test_edit_frequency(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "A"])
+    r = runner.invoke(main, ["edit", "A", "-f", "weekdays"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.frequency == "weekdays"
+
+
+def test_edit_invalid_frequency(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "A"])
+    r = runner.invoke(main, ["edit", "A", "-f", "nonsense"])
+    assert r.exit_code != 0
+
+
+def test_edit_unit_and_target(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Read"])
+    r = runner.invoke(
+        main, ["edit", "Read", "--unit", "pages", "--target", "20"]
+    )
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.unit == "pages"
+    assert h.target == 20.0
+
+
+def test_edit_clear_target_and_unit(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Read", "--unit", "pages", "--target", "20"])
+    r = runner.invoke(main, ["edit", "Read", "--target", "", "--unit", ""])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.unit is None
+    assert h.target is None
+
+
+def test_edit_target_without_unit_rejected(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Read"])
+    r = runner.invoke(main, ["edit", "Read", "--target", "10"])
+    assert r.exit_code != 0
+    assert "--target requires --unit" in r.output
+
+
+def test_edit_description_inline(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(
+        main, ["edit", "Exercise", "--description", "30 min daily"]
+    )
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.description == "30 min daily"
+
+
+def test_edit_no_flags_opens_editor(
+    runner: CliRunner, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    monkeypatch.setattr("click.edit", lambda *a, **kw: "edited via $EDITOR\n")
+    r = runner.invoke(main, ["edit", "Exercise"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.description == "edited via $EDITOR"
+
+
+def test_edit_editor_no_save_preserves(
+    runner: CliRunner, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner.invoke(main, ["add", "Exercise", "-d", "original"])
+    monkeypatch.setattr("click.edit", lambda *a, **kw: None)
+    r = runner.invoke(main, ["edit", "Exercise"])
+    assert r.exit_code == 0
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.description == "original"
+
+
+def test_edit_ambiguous_habit(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["add", "Relax"])
+    r = runner.invoke(main, ["edit", "re", "-f", "weekdays"])
+    assert r.exit_code != 0
+    assert "ambiguous" in r.output.lower()
+
+
+# ---- log ----------------------------------------------------------------------
+
+
+def test_log_empty(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["log"])
+    assert r.exit_code == 0
+    assert "no completions" in r.output
+
+
+def test_log_all_completions(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "A"])
+    runner.invoke(main, ["add", "B"])
+    runner.invoke(main, ["done", "A"])
+    runner.invoke(main, ["done", "B"])
+    r = runner.invoke(main, ["log"])
+    assert r.exit_code == 0
+    assert "A" in r.output
+    assert "B" in r.output
+
+
+def test_log_filter_by_habit(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "A"])
+    runner.invoke(main, ["add", "B"])
+    runner.invoke(main, ["done", "A"])
+    runner.invoke(main, ["done", "B"])
+    r = runner.invoke(main, ["log", "--habit", "A"])
+    assert r.exit_code == 0
+    assert "A" in r.output
+    # 'B' only appears as the filter miss; verify via row count approximation
+    # by checking the habit name column doesn't surface the other
+    assert r.output.count("B") == 0
+
+
+def test_log_window_filters_old_entries(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    old = (date.today() - timedelta(days=40)).isoformat()
+    runner.invoke(main, ["done", "Exercise", "--date", old])
+    r = runner.invoke(main, ["log", "--days", "30"])
+    assert r.exit_code == 0
+    assert "no completions" in r.output
+    r = runner.invoke(main, ["log", "--days", "60"])
+    assert r.exit_code == 0
+    assert old in r.output
+
+
+def test_log_rejects_nonpositive_days(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["log", "--days", "0"])
+    assert r.exit_code != 0
+
+
+def test_log_with_value_and_note(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Read", "--unit", "pages", "--target", "20"])
+    runner.invoke(main, ["done", "Read", "--value", "18", "--note", "focused"])
+    r = runner.invoke(main, ["log"])
+    assert r.exit_code == 0
+    assert "18" in r.output
+    assert "pages" in r.output
+    assert "focused" in r.output
