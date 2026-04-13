@@ -304,6 +304,13 @@ def log(habit: str | None, days: int) -> None:
         console.print(table)
 
 
+@main.command(help="Interactive daily check-in (TUI).")
+def check() -> None:
+    from .tui.app import FlowApp
+
+    FlowApp().run()
+
+
 @main.command(help="Archive a habit (soft delete, data preserved).")
 @click.argument("habit")
 def archive(habit: str) -> None:
