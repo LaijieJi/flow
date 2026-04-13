@@ -4,7 +4,7 @@ A momentum-based habit tracker for the terminal. No streaks. No guilt. Just cons
 
 ## Why
 
-Most habit trackers punish you for missing a day. One broken streak and motivation evaporates. Flow takes a different approach — it tracks **momentum**, not streaks. A single miss barely matters. What matters is the pattern over time.
+Most habit trackers punish you for missing a day. One broken streak and motivation evaporates. Flow takes a different approach - it tracks **momentum**, not streaks. A single miss barely matters. What matters is the pattern over time.
 
 ## Install
 
@@ -65,7 +65,7 @@ flow export --format csv    # export data (csv or json)
 
 ## How momentum works
 
-Flow uses a weighted recency score — an exponential moving average where recent days count more than older ones. Think of it like physical momentum: hard to stop once moving, but it slows down if you stop pushing.
+Flow uses a weighted recency score - an exponential moving average where recent days count more than older ones. Think of it like physical momentum: hard to stop once moving, but it slows down if you stop pushing.
 
 - A single miss barely dents your score
 - Recovery is always visible
