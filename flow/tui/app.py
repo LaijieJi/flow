@@ -7,6 +7,8 @@ from pathlib import Path
 
 from textual.app import App
 
+from ..models import Habit
+
 
 class FlowApp(App):
     """Top-level app shell. Holds the db path override and which screen to
@@ -20,16 +22,36 @@ class FlowApp(App):
         db_path: Path | None = None,
         initial: str = "check",
         today: date | None = None,
+        focus_habit: str | None = None,
+        detail_habit: Habit | None = None,
     ) -> None:
         super().__init__()
         self.db_path = db_path
         self.initial = initial
         self.today = today
+        self.focus_habit = focus_habit
+        self.detail_habit = detail_habit
 
     def on_mount(self) -> None:
         if self.initial == "check":
             from .screens.check import CheckScreen
 
             self.push_screen(CheckScreen(self.db_path, today=self.today))
+        elif self.initial == "stats":
+            from .screens.stats import StatsScreen
+
+            self.push_screen(
+                StatsScreen(
+                    self.db_path, today=self.today, focus_habit=self.focus_habit
+                )
+            )
+        elif self.initial == "detail":
+            from .screens.detail import DetailScreen
+
+            if self.detail_habit is None:
+                raise ValueError("detail initial requires detail_habit")
+            self.push_screen(
+                DetailScreen(self.db_path, self.detail_habit, today=self.today)
+            )
         else:
             raise ValueError(f"unknown initial screen: {self.initial!r}")

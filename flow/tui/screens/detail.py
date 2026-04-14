@@ -1,0 +1,102 @@
+"""Single-habit drill-down screen. Shows summary, 30-day grid, recent notes."""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.screen import Screen
+from textual.widgets import Footer, Header, Label, Static
+
+from ... import db
+from ...models import Habit
+from ...momentum import compute_momentum
+from ..widgets.completion_grid import CompletionGrid
+
+
+class DetailScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("q", "go_back", "Back"),
+    ]
+
+    DEFAULT_CSS = """
+    DetailScreen {
+        align: center top;
+    }
+    #detail-title,
+    #detail-summary,
+    #notes-title {
+        margin: 1 2 0 2;
+    }
+    CompletionGrid {
+        margin: 1 2;
+        border: round $accent;
+        padding: 0 1;
+    }
+    #notes-box {
+        margin: 0 2 1 2;
+        border: round $accent;
+        padding: 0 1;
+        height: auto;
+        max-height: 40%;
+    }
+    """
+
+    def __init__(
+        self,
+        db_path: Path | None,
+        habit: Habit,
+        today: date | None = None,
+    ) -> None:
+        super().__init__()
+        self.db_path = db_path
+        self.habit = habit
+        self.today = today or date.today()
+        self.summary_text: str = ""
+        self.notes_text: str = ""
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield Label(
+            f"[bold]{self.habit.name}[/bold]  [dim]— {self.habit.frequency}[/dim]",
+            id="detail-title",
+        )
+        yield Label("", id="detail-summary")
+        yield CompletionGrid(id="detail-grid")
+        yield Label("recent notes", id="notes-title")
+        with VerticalScroll(id="notes-box"):
+            yield Static("", id="notes-body")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.title = f"flow — {self.habit.name}"
+
+        with db.session(self.db_path) as conn:
+            comps = db.completions_for_habit(conn, self.habit.id)
+
+        mom = compute_momentum(self.habit, comps, today=self.today)
+        self.summary_text = (
+            f"score [bold]{mom.score:.0f}[/bold]  {mom.trend}  "
+            f"rate [bold]{mom.completion_rate:.0%}[/bold] "
+            f"[dim]({mom.window_days}d)[/dim]"
+        )
+        self.query_one("#detail-summary", Label).update(self.summary_text)
+        self.query_one(CompletionGrid).set_habit(self.habit, comps, today=self.today)
+
+        notes = sorted(
+            (c for c in comps if c.note), key=lambda c: c.date, reverse=True
+        )[:10]
+        if notes:
+            self.notes_text = "\n".join(
+                f"[dim]{c.date.isoformat()}[/dim]  {c.note}" for c in notes
+            )
+        else:
+            self.notes_text = "[dim]no notes yet[/dim]"
+        self.query_one("#notes-body", Static).update(self.notes_text)
+
+    def action_go_back(self) -> None:
+        self.app.pop_screen()

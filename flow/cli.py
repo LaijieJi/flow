@@ -311,6 +311,20 @@ def check() -> None:
     FlowApp().run()
 
 
+@main.command(help="Momentum dashboard (TUI). Pass a habit to drill in.")
+@click.argument("habit", required=False)
+def stats(habit: str | None) -> None:
+    from .tui.app import FlowApp
+
+    if habit is None:
+        FlowApp(initial="stats").run()
+        return
+
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+    FlowApp(initial="detail", detail_habit=h).run()
+
+
 @main.command(help="Archive a habit (soft delete, data preserved).")
 @click.argument("habit")
 def archive(habit: str) -> None:
