@@ -7,6 +7,7 @@ scripting-friendly: exit codes are stable, output is plain when possible.
 
 from __future__ import annotations
 
+import sys
 from datetime import date, timedelta
 from typing import Iterable
 
@@ -15,7 +16,7 @@ from dateutil import parser as dateparser
 from rich.console import Console
 from rich.table import Table
 
-from . import db
+from . import db, export as _export
 from .models import Completion, Habit, parse_frequency
 from .momentum import compute_momentum
 
@@ -323,6 +324,56 @@ def stats(habit: str | None) -> None:
     with db.session() as conn:
         h = _resolve_habit(conn, habit, include_archived=True)
     FlowApp(initial="detail", detail_habit=h).run()
+
+
+@main.command(help="Export habit data (CSV or JSON). Stdout by default.")
+@click.option(
+    "--format",
+    "-F",
+    "fmt",
+    type=click.Choice(["csv", "json"]),
+    default="csv",
+    show_default=True,
+)
+@click.option("--all", "include_archived", is_flag=True, help="include archived habits")
+@click.option("--habit", default=None, help="filter to a single habit (exact name)")
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="write to file instead of stdout",
+)
+def export(
+    fmt: str,
+    include_archived: bool,
+    habit: str | None,
+    output_path: str | None,
+) -> None:
+    if habit is not None:
+        with db.session() as conn:
+            match = db.find_habit_by_name(conn, habit, include_archived=True)
+            if match is None:
+                raise click.ClickException(f"no habit named {habit!r}")
+
+    stream: object
+    opened_file = None
+    if output_path is None:
+        stream = sys.stdout
+    else:
+        opened_file = open(output_path, "w", encoding="utf-8", newline="")
+        stream = opened_file
+
+    try:
+        with db.session() as conn:
+            if fmt == "csv":
+                _export.write_csv(conn, stream, include_archived, habit)
+            else:
+                _export.write_json(conn, stream, include_archived, habit)
+    finally:
+        if opened_file is not None:
+            opened_file.close()
 
 
 @main.command(help="Archive a habit (soft delete, data preserved).")
