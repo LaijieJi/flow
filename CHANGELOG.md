@@ -5,11 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — 2026-04-15
+## [0.1.1] - 2026-04-15
+
+- TUI check-in: pressing `v` (set value) or `n` (add note) crashed with `NoActiveWorker` on Textual 8.x. Modal actions now run inside a worker via `@work` so `push_screen_wait` has a valid context.
+- Added pilot regression tests for both modal paths.
+
+## [0.1.0] - 2026-04-15
 
 First tagged release.
 
 ### Added
+
 - SQLite storage at `~/.flow/habits.db` with versioned migrations.
 - Habit model with frequencies: `daily`, `weekdays`, `weekly` (Monday), and custom weekday lists like `mon,wed,fri`.
 - Completion model with optional value and short note (≤280 chars).
@@ -30,6 +36,7 @@ First tagged release.
 - 145 tests covering storage, momentum, CLI, TUI pilots, export, and integration flows.
 
 ### Design decisions
+
 - No streaks in data model or UI. A miss is just a datapoint.
 - No color-coded shame in the completion grid — misses are only dimmed.
 - No cloud sync, no telemetry, no account. Local-first by design.
