@@ -8,11 +8,11 @@ version = "0.1.0"
 description = "A momentum-based habit tracker for the terminal."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 authors = [{ name = "LaijieJi" }]
-keywords = ["habits", "tracker", "terminal", "tui", "cli"]
+keywords = ["habits", "tracker", "terminal", "tui", "cli", "momentum"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
@@ -20,7 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Utilities",
+    "Topic :: Office/Business :: Scheduling",
 ]
 dependencies = [
     "textual>=0.60",
@@ -42,6 +44,8 @@ flow = "flow.cli:main"
 [project.urls]
 Homepage = "https://github.com/LaijieJi/flow"
 Repository = "https://github.com/LaijieJi/flow"
+Issues = "https://github.com/LaijieJi/flow/issues"
+Changelog = "https://github.com/LaijieJi/flow/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["flow*"]
