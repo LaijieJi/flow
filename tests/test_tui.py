@@ -11,6 +11,7 @@ from flow import db
 from flow.models import Habit, Completion
 from flow.tui.app import FlowApp
 from flow.tui.screens.check import CheckScreen
+from flow.tui.screens.prompt import PromptScreen
 from flow.tui.widgets.habit_row import HabitRow
 
 
@@ -137,6 +138,57 @@ async def test_quit_exits(seeded_db: Path) -> None:
         await pilot.press("q")
         await pilot.pause()
     assert app.return_value is None  # clean exit
+
+
+@pytest.mark.asyncio
+async def test_set_value_opens_prompt(seeded_db: Path) -> None:
+    """Regression: pressing `v` must open PromptScreen via a worker.
+    Previously crashed with NoActiveWorker because push_screen_wait wasn't
+    run inside a worker context."""
+    today = date(2026, 4, 13)
+    app = FlowApp(db_path=seeded_db, today=today)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("v")
+        await pilot.pause()
+        assert isinstance(app.screen, PromptScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, CheckScreen)
+
+
+@pytest.mark.asyncio
+async def test_set_value_submits_and_persists(seeded_db: Path) -> None:
+    today = date(2026, 4, 13)
+    app = FlowApp(db_path=seeded_db, today=today)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("v")
+        await pilot.pause()
+        # PromptScreen focused on its Input. Type value + enter.
+        for ch in "15":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+    with db.session(seeded_db) as conn:
+        comps = db.completions_on(conn, today)
+    assert len(comps) == 1
+    assert comps[0].value == 15.0
+
+
+@pytest.mark.asyncio
+async def test_add_note_opens_prompt(seeded_db: Path) -> None:
+    today = date(2026, 4, 13)
+    app = FlowApp(db_path=seeded_db, today=today)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, PromptScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, CheckScreen)
 
 
 def test_habit_row_render_unscheduled() -> None:

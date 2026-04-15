@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
@@ -117,6 +118,7 @@ class CheckScreen(Screen):
                 row.completion = c
         row.refresh_text()
 
+    @work
     async def action_set_value(self) -> None:
         row = self._current_row()
         if row is None or not row.scheduled:
@@ -152,6 +154,7 @@ class CheckScreen(Screen):
             row.completion = c
         row.refresh_text()
 
+    @work
     async def action_add_note(self) -> None:
         row = self._current_row()
         if row is None or not row.scheduled:
