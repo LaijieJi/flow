@@ -14,12 +14,26 @@ from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Label, ListView
+from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from ... import db
 from ...models import Completion, Habit
 from ..widgets.habit_row import HabitRow
+from .add_habit import AddHabitScreen
 from .prompt import PromptScreen
+
+
+class AddHabitRow(ListItem):
+    """Placeholder row at the top of the list for creating a new habit."""
+
+    DEFAULT_CSS = """
+    AddHabitRow {
+        padding: 0 1;
+    }
+    """
+
+    def compose(self):
+        yield Static("[bold]+[/bold]  Add new habit...", markup=True)
 
 
 class CheckScreen(Screen):
@@ -29,6 +43,7 @@ class CheckScreen(Screen):
         Binding("space", "toggle", "Toggle"),
         Binding("v", "set_value", "Value"),
         Binding("n", "add_note", "Note"),
+        Binding("a", "add_habit", "Add"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -74,7 +89,7 @@ class CheckScreen(Screen):
 
     # -- data ------------------------------------------------------------------
 
-    def _reload(self) -> None:
+    def _reload(self, focus_add_row: bool = False) -> None:
         with db.session(self.db_path) as conn:
             habits = db.list_habits(conn)
             completions = db.completions_on(conn, self.today)
@@ -82,21 +97,43 @@ class CheckScreen(Screen):
 
         lv = self.query_one("#rows", ListView)
         lv.clear()
+
+        # "+" row always first
+        lv.append(AddHabitRow())
+
         for h in habits:
             lv.append(HabitRow(h, self.today, comp_map.get(h.id)))
 
-        # Focus first scheduled row if any
-        for i, item in enumerate(lv.children):
-            if isinstance(item, HabitRow) and item.scheduled:
-                lv.index = i
-                break
+        if focus_add_row or not habits:
+            lv.index = 0
+        else:
+            # Focus first scheduled habit row (index 1+)
+            for i, item in enumerate(lv.children):
+                if isinstance(item, HabitRow) and item.scheduled:
+                    lv.index = i
+                    break
 
     def _current_row(self) -> HabitRow | None:
         lv = self.query_one("#rows", ListView)
         item = lv.highlighted_child
         return item if isinstance(item, HabitRow) else None
 
-    # -- actions ---------------------------------------------------------------
+    # -- add habit -------------------------------------------------------------
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Enter key on the "+" row opens the add-habit form."""
+        if isinstance(event.item, AddHabitRow):
+            self.action_add_habit()
+
+    @work
+    async def action_add_habit(self) -> None:
+        result = await self.app.push_screen_wait(
+            AddHabitScreen(db_path=self.db_path)
+        )
+        if result is not None:
+            self._reload(focus_add_row=True)
+
+    # -- toggle / value / note -------------------------------------------------
 
     def action_cursor_down(self) -> None:
         self.query_one("#rows", ListView).action_cursor_down()
