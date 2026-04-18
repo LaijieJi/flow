@@ -7,6 +7,7 @@ scripting-friendly: exit codes are stable, output is plain when possible.
 
 from __future__ import annotations
 
+import random as _random
 import sys
 from datetime import date, timedelta
 from typing import Iterable
@@ -16,7 +17,7 @@ from dateutil import parser as dateparser
 from rich.console import Console
 from rich.table import Table
 
-from . import db, export as _export
+from . import config as _config, db, export as _export, help_text
 from .models import Completion, Habit, parse_frequency
 from .momentum import compute_momentum
 
@@ -394,6 +395,141 @@ def restore(habit: str) -> None:
         if not db.restore_habit(conn, h.id):
             raise click.ClickException(f"{h.name} is not archived")
     console.print(f"[green]restored[/green] {h.name}")
+
+
+@main.command(help="Pick a random scheduled-but-undone habit.")
+@click.option("--seed", type=int, default=None, help="reproducible pick (testing)")
+def random(seed: int | None) -> None:
+    today_ = date.today()
+    with db.session() as conn:
+        habits = db.list_habits(conn)
+        done_ids = {c.habit_id for c in db.completions_on(conn, today_)}
+
+    candidates = [
+        h for h in habits if h.is_scheduled_on(today_) and h.id not in done_ids
+    ]
+    if not candidates:
+        click.echo("nothing scheduled + undone today")
+        return
+    rng = _random.Random(seed) if seed is not None else _random
+    pick = rng.choice(candidates)
+    console.print(f"[bold]{pick.name}[/bold] [dim]({pick.frequency})[/dim]")
+
+
+@main.command(help="Reverse the most recent completion.")
+@click.option("--habit", default=None, help="scope to a single habit")
+def undo(habit: str | None) -> None:
+    with db.session() as conn:
+        habit_id: int | None = None
+        if habit is not None:
+            habit_id = _resolve_habit(conn, habit, include_archived=True).id
+        hit = db.most_recent_completion(conn, habit_id=habit_id)
+        if hit is None:
+            raise click.ClickException("no completions to undo")
+        c, h = hit
+        db.delete_completion(conn, h.id, c.date)
+
+    console.print(f"[yellow]undone[/yellow] {h.name} [dim]({c.date.isoformat()})[/dim]")
+
+
+@main.group(help="Read or write persistent preferences.")
+def config() -> None:
+    pass
+
+
+@config.command("list", help="Show all config values.")
+def config_list() -> None:
+    cfg = _config.load()
+    for k in sorted(cfg):
+        console.print(f"{k} = {cfg[k]}")
+
+
+@config.command("get", help="Print a single config value.")
+@click.argument("key")
+def config_get(key: str) -> None:
+    try:
+        click.echo(_config.get(key))
+    except KeyError as e:
+        raise click.ClickException(str(e).strip("'"))
+
+
+@config.command("set", help="Set a config value.")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    try:
+        stored = _config.set_value(key, value)
+    except (KeyError, ValueError) as e:
+        raise click.ClickException(str(e).strip("'"))
+    console.print(f"[green]set[/green] {key} = {stored}")
+
+
+@main.command(help="Show keybinding + command reference.")
+def help() -> None:
+    click.echo(help_text.render_plain(), nl=False)
+
+
+_COMPLETION_INSTRUCTIONS = {
+    "bash": (
+        "# Add to ~/.bashrc:\n"
+        'eval "$(_FLOW_COMPLETE=bash_source flow)"\n'
+    ),
+    "zsh": (
+        "# Add to ~/.zshrc:\n"
+        'eval "$(_FLOW_COMPLETE=zsh_source flow)"\n'
+    ),
+    "fish": (
+        "# Save to ~/.config/fish/completions/flow.fish:\n"
+        "_FLOW_COMPLETE=fish_source flow | source\n"
+    ),
+}
+
+
+@main.command(
+    "completion",
+    help="Print shell completion snippet. Eval it or add to your shell rc.",
+)
+@click.argument("shell", type=click.Choice(sorted(_COMPLETION_INSTRUCTIONS)))
+def completion(shell: str) -> None:
+    click.echo(_COMPLETION_INSTRUCTIONS[shell], nl=False)
+
+
+@main.command(help="One-line summary of today's habits (for shell prompts).")
+@click.option(
+    "--format",
+    "-F",
+    "fmt",
+    type=click.Choice(["text", "count"]),
+    default="text",
+    show_default=True,
+    help="'text' = human summary, 'count' = 'done/total' only",
+)
+def today(fmt: str) -> None:
+    today_ = date.today()
+    with db.session() as conn:
+        habits = db.list_habits(conn)
+        scheduled = [h for h in habits if h.is_scheduled_on(today_)]
+        done_ids = {c.habit_id for c in db.completions_on(conn, today_)}
+
+    total = len(scheduled)
+    done_count = sum(1 for h in scheduled if h.id in done_ids)
+
+    if fmt == "count":
+        click.echo(f"{done_count}/{total}")
+        return
+
+    if total == 0:
+        click.echo("flow: nothing scheduled today")
+        return
+
+    remaining = [h.name for h in scheduled if h.id not in done_ids]
+    if not remaining:
+        click.echo(f"flow: {done_count}/{total} ✓ all done")
+        return
+    preview = ", ".join(remaining[:3])
+    if len(remaining) > 3:
+        preview += f", +{len(remaining) - 3} more"
+    click.echo(f"flow: {done_count}/{total} — {preview}")
 
 
 if __name__ == "__main__":

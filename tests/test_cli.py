@@ -458,3 +458,182 @@ def test_log_with_value_and_note(runner: CliRunner, db_path: Path) -> None:
     assert "18" in r.output
     assert "pages" in r.output
     assert "focused" in r.output
+
+
+# ---- help --------------------------------------------------------------------
+
+
+def test_help_command_lists_sections(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["help"])
+    assert r.exit_code == 0
+    assert "CLI commands" in r.output
+    assert "Check screen" in r.output
+    assert "Stats screen" in r.output
+    assert "flow add" in r.output
+
+
+# ---- today -------------------------------------------------------------------
+
+
+def test_today_with_no_habits(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["today"])
+    assert r.exit_code == 0
+    assert "nothing scheduled" in r.output
+
+
+def test_today_lists_remaining(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["today"])
+    assert r.exit_code == 0
+    assert "1/2" in r.output
+    assert "Read" in r.output
+
+
+def test_today_all_done(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["today"])
+    assert r.exit_code == 0
+    assert "all done" in r.output
+
+
+def test_today_count_format(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["today", "--format", "count"])
+    assert r.exit_code == 0
+    assert r.output.strip() == "1/2"
+
+
+# ---- undo --------------------------------------------------------------------
+
+
+def test_undo_removes_last_completion(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["undo"])
+    assert r.exit_code == 0
+    assert "undone" in r.output
+    assert "Exercise" in r.output
+    with db.session(db_path) as conn:
+        assert db.completions_on(conn, date.today()) == []
+
+
+def test_undo_scoped_to_habit(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["done", "Exercise"])
+    runner.invoke(main, ["done", "Read"])
+    r = runner.invoke(main, ["undo", "--habit", "Exercise"])
+    assert r.exit_code == 0
+    with db.session(db_path) as conn:
+        comps = db.completions_on(conn, date.today())
+    assert len(comps) == 1
+    with db.session(db_path) as conn:
+        h = db.get_habit(conn, comps[0].habit_id)
+    assert h.name == "Read"
+
+
+def test_undo_empty_errors(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["undo"])
+    assert r.exit_code != 0
+    assert "no completions" in r.output
+
+
+# ---- random ------------------------------------------------------------------
+
+
+def test_random_picks_undone_habit(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    r = runner.invoke(main, ["random", "--seed", "1"])
+    assert r.exit_code == 0
+    assert "Exercise" in r.output or "Read" in r.output
+
+
+def test_random_skips_done_habit(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["random", "--seed", "1"])
+    assert r.exit_code == 0
+    assert "nothing scheduled + undone" in r.output
+
+
+def test_random_seed_is_deterministic(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "A"])
+    runner.invoke(main, ["add", "B"])
+    runner.invoke(main, ["add", "C"])
+    a = runner.invoke(main, ["random", "--seed", "42"]).output
+    b = runner.invoke(main, ["random", "--seed", "42"]).output
+    assert a == b
+
+
+# ---- config ------------------------------------------------------------------
+
+
+def test_config_set_and_get_theme(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    db_path: Path,
+) -> None:
+    monkeypatch.setenv("FLOW_CONFIG_PATH", str(tmp_path / "config.json"))
+    r = runner.invoke(main, ["config", "set", "theme", "light"])
+    assert r.exit_code == 0
+    r = runner.invoke(main, ["config", "get", "theme"])
+    assert r.exit_code == 0
+    assert r.output.strip() == "light"
+
+
+def test_config_set_rejects_invalid_theme(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    db_path: Path,
+) -> None:
+    monkeypatch.setenv("FLOW_CONFIG_PATH", str(tmp_path / "config.json"))
+    r = runner.invoke(main, ["config", "set", "theme", "neon"])
+    assert r.exit_code != 0
+    assert "invalid theme" in r.output
+
+
+def test_config_rejects_unknown_key(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    db_path: Path,
+) -> None:
+    monkeypatch.setenv("FLOW_CONFIG_PATH", str(tmp_path / "config.json"))
+    r = runner.invoke(main, ["config", "set", "banana", "yes"])
+    assert r.exit_code != 0
+    assert "unknown config key" in r.output
+
+
+def test_config_list_shows_defaults(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    db_path: Path,
+) -> None:
+    monkeypatch.setenv("FLOW_CONFIG_PATH", str(tmp_path / "config.json"))
+    r = runner.invoke(main, ["config", "list"])
+    assert r.exit_code == 0
+    assert "theme" in r.output
+
+
+# ---- completion --------------------------------------------------------------
+
+
+def test_completion_prints_bash_snippet(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["completion", "bash"])
+    assert r.exit_code == 0
+    assert "_FLOW_COMPLETE=bash_source" in r.output
+
+
+def test_completion_rejects_unknown_shell(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["completion", "powershell"])
+    assert r.exit_code != 0

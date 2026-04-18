@@ -7,6 +7,7 @@ screen can be exited at any point without losing state.
 
 from __future__ import annotations
 
+import random
 from datetime import date
 from pathlib import Path
 
@@ -44,6 +45,10 @@ class CheckScreen(Screen):
         Binding("v", "set_value", "Value"),
         Binding("n", "add_note", "Note"),
         Binding("a", "add_habit", "Add"),
+        Binding("u", "undo", "Undo"),
+        Binding("r", "random", "Random"),
+        Binding("t", "toggle_theme", "Theme"),
+        Binding("h", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -218,6 +223,39 @@ class CheckScreen(Screen):
             db.upsert_completion(conn, c)
             row.completion = c
         row.refresh_text()
+
+    def action_random(self) -> None:
+        from textual.widgets import ListView
+
+        lv = self.query_one("#rows", ListView)
+        candidates = [
+            i
+            for i, item in enumerate(lv.children)
+            if isinstance(item, HabitRow) and item.scheduled and item.completion is None
+        ]
+        if not candidates:
+            self.notify("nothing scheduled + undone", severity="warning", timeout=2)
+            return
+        lv.index = random.choice(candidates)
+
+    def action_undo(self) -> None:
+        with db.session(self.db_path) as conn:
+            hit = db.most_recent_completion(conn)
+            if hit is None:
+                self.notify("nothing to undo", severity="warning", timeout=2)
+                return
+            c, h = hit
+            db.delete_completion(conn, h.id, c.date)
+        self.notify(f"undone {h.name} ({c.date.isoformat()})", timeout=2)
+        self._reload()
+
+    def action_toggle_theme(self) -> None:
+        self.app.toggle_theme()
+
+    def action_help(self) -> None:
+        from .help import HelpScreen
+
+        self.app.push_screen(HelpScreen())
 
     def action_quit(self) -> None:
         self.app.exit()

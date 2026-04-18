@@ -319,6 +319,57 @@ async def test_export_screen_writes_csv(seeded_db: Path, tmp_path: Path) -> None
     assert "Read" in content
 
 
+async def test_stats_help_modal_opens(seeded_db: Path) -> None:
+    from flow.tui.screens.help import HelpScreen
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, StatsScreen)
+
+
+async def test_detail_help_modal_opens(seeded_db: Path) -> None:
+    from flow.tui.screens.help import HelpScreen
+
+    today = date(2026, 4, 13)
+    with db.session(seeded_db) as conn:
+        read = [h for h in db.list_habits(conn) if h.name == "Read"][0]
+
+    app = FlowApp(db_path=seeded_db, initial="detail", today=today, detail_habit=read)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, DetailScreen)
+
+
+async def test_stats_theme_toggle(
+    seeded_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from flow import config as _config
+
+    cfg_path = tmp_path / "config.json"
+    monkeypatch.setenv("FLOW_CONFIG_PATH", str(cfg_path))
+    _config.save({"theme": "dark"})
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.dark is True
+        await pilot.press("t")
+        await pilot.pause()
+        assert app.dark is False
+    assert _config.get("theme") == "light"
+
+
 async def test_log_screen_lists_completions(seeded_db: Path) -> None:
     from flow.tui.screens.log import LogScreen
     from textual.widgets import DataTable

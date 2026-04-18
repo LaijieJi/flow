@@ -321,6 +321,45 @@ def all_completions(
     return out
 
 
+def most_recent_completion(
+    conn: sqlite3.Connection, habit_id: int | None = None
+) -> tuple[Completion, Habit] | None:
+    """Most recent completion across all habits, or scoped to one. Tie-breaks
+    on completion id so the true "last recorded" wins even on same-day pairs."""
+    sql = (
+        "SELECT c.*, h.name AS h_name, h.description AS h_description, "
+        "h.frequency AS h_frequency, h.unit AS h_unit, h.target AS h_target, "
+        "h.created_at AS h_created_at, h.archived_at AS h_archived_at "
+        "FROM completions c JOIN habits h ON h.id = c.habit_id"
+    )
+    params: list = []
+    if habit_id is not None:
+        sql += " WHERE c.habit_id = ?"
+        params.append(habit_id)
+    sql += " ORDER BY c.date DESC, c.id DESC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    if row is None:
+        return None
+    completion = Completion(
+        id=row["id"],
+        habit_id=row["habit_id"],
+        date=row["date"],
+        value=row["value"],
+        note=row["note"],
+    )
+    habit = Habit(
+        id=row["habit_id"],
+        name=row["h_name"],
+        description=row["h_description"],
+        frequency=row["h_frequency"],
+        unit=row["h_unit"],
+        target=row["h_target"],
+        created_at=row["h_created_at"],
+        archived_at=row["h_archived_at"],
+    )
+    return completion, habit
+
+
 def completions_on(conn: sqlite3.Connection, on: date) -> list[Completion]:
     rows = conn.execute(
         "SELECT * FROM completions WHERE date = ? ORDER BY habit_id", (on,)

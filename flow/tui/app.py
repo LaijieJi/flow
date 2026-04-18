@@ -7,6 +7,7 @@ from pathlib import Path
 
 from textual.app import App
 
+from .. import config as _config
 from ..models import Habit
 
 
@@ -33,6 +34,7 @@ class FlowApp(App):
         self.detail_habit = detail_habit
 
     def on_mount(self) -> None:
+        self._apply_theme_from_config()
         if self.initial == "check":
             from .screens.check import CheckScreen
 
@@ -55,3 +57,14 @@ class FlowApp(App):
             )
         else:
             raise ValueError(f"unknown initial screen: {self.initial!r}")
+
+    # -- theme helpers ---------------------------------------------------------
+
+    def _apply_theme_from_config(self) -> None:
+        theme = _config.get("theme")
+        self.dark = theme != "light"
+
+    def toggle_theme(self) -> None:
+        """Flip dark <-> light and persist so the choice survives restarts."""
+        self.dark = not self.dark
+        _config.set_value("theme", "dark" if self.dark else "light")

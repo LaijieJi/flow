@@ -216,3 +216,123 @@ def test_habit_row_render_truncates_long_note() -> None:
     row = HabitRow(h, today=date(2026, 4, 13), completion=c)
     text = row._render_text()
     assert "..." in text
+
+
+# ---- help modal --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_help_opens_and_closes(seeded_db: Path) -> None:
+    from flow.tui.screens.help import HelpScreen
+
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, CheckScreen)
+
+
+# ---- undo (u key) ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_undo_removes_last_completion(seeded_db: Path) -> None:
+    today = date(2026, 4, 13)
+    with db.session(seeded_db) as conn:
+        ex = db.list_habits(conn)[0]
+        db.upsert_completion(conn, Completion(habit_id=ex.id, date=today))
+
+    app = FlowApp(db_path=seeded_db, today=today)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause()
+
+    with db.session(seeded_db) as conn:
+        assert db.completions_on(conn, today) == []
+
+
+@pytest.mark.asyncio
+async def test_undo_with_no_completions_no_crash(seeded_db: Path) -> None:
+    today = date(2026, 4, 13)
+    app = FlowApp(db_path=seeded_db, today=today)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause()
+        assert isinstance(app.screen, CheckScreen)
+
+
+# ---- random (r key) ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_random_moves_cursor_to_scheduled_undone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After r, cursor should land on a scheduled + undone habit row."""
+    from flow.tui.widgets.habit_row import HabitRow
+
+    path = tmp_path / "r.db"
+    monkeypatch.setenv("FLOW_DB_PATH", str(path))
+    with db.session(path) as conn:
+        db.insert_habit(conn, Habit(name="A", frequency="daily"))
+        db.insert_habit(conn, Habit(name="B", frequency="daily"))
+        db.insert_habit(conn, Habit(name="C", frequency="daily"))
+
+    today = date(2026, 4, 13)
+    app = FlowApp(db_path=path, today=today)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        lv = app.screen.query_one("#rows")
+        landed = lv.children[lv.index]
+        assert isinstance(landed, HabitRow)
+        assert landed.scheduled
+        assert landed.completion is None
+
+
+# ---- theme toggle (t key) ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_theme_toggle_persists_to_config(
+    seeded_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from flow import config as _config
+
+    cfg_path = tmp_path / "config.json"
+    monkeypatch.setenv("FLOW_CONFIG_PATH", str(cfg_path))
+    # Start explicitly dark so a single toggle lands on light
+    _config.save({"theme": "dark"})
+
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.dark is True
+        await pilot.press("t")
+        await pilot.pause()
+        assert app.dark is False
+
+    assert _config.get("theme") == "light"
+
+
+@pytest.mark.asyncio
+async def test_theme_light_is_applied_on_mount(
+    seeded_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from flow import config as _config
+
+    cfg_path = tmp_path / "config.json"
+    monkeypatch.setenv("FLOW_CONFIG_PATH", str(cfg_path))
+    _config.save({"theme": "light"})
+
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.dark is False

@@ -25,6 +25,8 @@ class StatsScreen(Screen):
         Binding("l", "open_log", "Log"),
         Binding("E", "open_export", "Export"),
         Binding("A", "toggle_archived", "Toggle archived"),
+        Binding("t", "toggle_theme", "Theme"),
+        Binding("h", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -182,6 +184,14 @@ class StatsScreen(Screen):
     def action_toggle_archived(self) -> None:
         self.include_archived = not self.include_archived
         self._load()
+
+    def action_toggle_theme(self) -> None:
+        self.app.toggle_theme()
+
+    def action_help(self) -> None:
+        from .help import HelpScreen
+
+        self.app.push_screen(HelpScreen())
 
     def action_quit(self) -> None:
         self.app.exit()

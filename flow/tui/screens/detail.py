@@ -25,6 +25,8 @@ class DetailScreen(Screen):
         Binding("q", "go_back", "Back"),
         Binding("e", "edit", "Edit"),
         Binding("x", "archive_toggle", "Archive"),
+        Binding("t", "toggle_theme", "Theme"),
+        Binding("h", "help", "Help"),
     ]
 
     DEFAULT_CSS = """
@@ -126,6 +128,14 @@ class DetailScreen(Screen):
         if result is not None:
             self._refresh()
             self.notify(f"updated {result.name}", timeout=2)
+
+    def action_toggle_theme(self) -> None:
+        self.app.toggle_theme()
+
+    def action_help(self) -> None:
+        from .help import HelpScreen
+
+        self.app.push_screen(HelpScreen())
 
     def action_archive_toggle(self) -> None:
         with db.session(self.db_path) as conn:
