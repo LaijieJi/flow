@@ -259,6 +259,32 @@ def test_archive_nonexistent_errors(runner: CliRunner, db_path: Path) -> None:
     assert r.exit_code != 0
 
 
+# ---- restore ------------------------------------------------------------------
+
+
+def test_restore_unarchives(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Back"])
+    runner.invoke(main, ["archive", "Back"])
+    r = runner.invoke(main, ["restore", "Back"])
+    assert r.exit_code == 0, r.output
+    assert "restored" in r.output.lower()
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.archived_at is None
+
+
+def test_restore_active_errors(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Active"])
+    r = runner.invoke(main, ["restore", "Active"])
+    assert r.exit_code != 0
+    assert "not archived" in r.output
+
+
+def test_restore_nonexistent_errors(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["restore", "Nope"])
+    assert r.exit_code != 0
+
+
 # ---- edit ---------------------------------------------------------------------
 
 

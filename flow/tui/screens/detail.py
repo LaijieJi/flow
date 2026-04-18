@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -15,12 +16,15 @@ from ... import db
 from ...models import Habit
 from ...momentum import compute_momentum
 from ..widgets.completion_grid import CompletionGrid
+from .edit_habit import EditHabitScreen
 
 
 class DetailScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("q", "go_back", "Back"),
+        Binding("e", "edit", "Edit"),
+        Binding("x", "archive_toggle", "Archive"),
     ]
 
     DEFAULT_CSS = """
@@ -61,10 +65,7 @@ class DetailScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield Label(
-            f"[bold]{self.habit.name}[/bold]  [dim]— {self.habit.frequency}[/dim]",
-            id="detail-title",
-        )
+        yield Label("", id="detail-title")
         yield Label("", id="detail-summary")
         yield CompletionGrid(id="detail-grid")
         yield Label("recent notes", id="notes-title")
@@ -73,10 +74,26 @@ class DetailScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
         self.title = f"flow — {self.habit.name}"
 
         with db.session(self.db_path) as conn:
+            fresh = db.get_habit(conn, self.habit.id)
+            if fresh is not None:
+                self.habit = fresh
             comps = db.completions_for_habit(conn, self.habit.id)
+
+        archived_tag = (
+            f"  [red](archived {self.habit.archived_at.isoformat()})[/red]"
+            if self.habit.is_archived
+            else ""
+        )
+        self.query_one("#detail-title", Label).update(
+            f"[bold]{self.habit.name}[/bold]  [dim]— {self.habit.frequency}[/dim]"
+            + archived_tag
+        )
 
         mom = compute_momentum(self.habit, comps, today=self.today)
         self.summary_text = (
@@ -100,3 +117,27 @@ class DetailScreen(Screen):
 
     def action_go_back(self) -> None:
         self.app.pop_screen()
+
+    @work
+    async def action_edit(self) -> None:
+        result = await self.app.push_screen_wait(
+            EditHabitScreen(self.habit, db_path=self.db_path)
+        )
+        if result is not None:
+            self._refresh()
+            self.notify(f"updated {result.name}", timeout=2)
+
+    def action_archive_toggle(self) -> None:
+        with db.session(self.db_path) as conn:
+            if self.habit.is_archived:
+                if db.restore_habit(conn, self.habit.id):
+                    msg = f"restored {self.habit.name}"
+                else:
+                    msg = "not archived"
+            else:
+                if db.archive_habit(conn, self.habit.id):
+                    msg = f"archived {self.habit.name}"
+                else:
+                    msg = "already archived"
+        self._refresh()
+        self.notify(msg, timeout=2)

@@ -386,5 +386,15 @@ def archive(habit: str) -> None:
     console.print(f"[yellow]archived[/yellow] {h.name}")
 
 
+@main.command(help="Restore (unarchive) a habit.")
+@click.argument("habit")
+def restore(habit: str) -> None:
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+        if not db.restore_habit(conn, h.id):
+            raise click.ClickException(f"{h.name} is not archived")
+    console.print(f"[green]restored[/green] {h.name}")
+
+
 if __name__ == "__main__":
     main()

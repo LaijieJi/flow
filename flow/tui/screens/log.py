@@ -1,0 +1,95 @@
+"""Chronological completion history, mirroring `flow log`."""
+
+from __future__ import annotations
+
+from datetime import date, timedelta
+from pathlib import Path
+
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.screen import Screen
+from textual.widgets import DataTable, Footer, Header, Label
+
+from ... import db
+
+
+class LogScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back"),
+        Binding("q", "go_back", "Back"),
+        Binding("bracket_left", "shorter", "-7d"),
+        Binding("bracket_right", "longer", "+7d"),
+    ]
+
+    DEFAULT_CSS = """
+    LogScreen {
+        align: center top;
+    }
+    #log-title {
+        margin: 1 2;
+    }
+    DataTable {
+        margin: 0 2 1 2;
+        height: auto;
+        max-height: 85%;
+    }
+    """
+
+    def __init__(
+        self,
+        db_path: Path | None = None,
+        today: date | None = None,
+        days: int = 30,
+    ) -> None:
+        super().__init__()
+        self.db_path = db_path
+        self.today = today or date.today()
+        self.days = days
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield Label("", id="log-title")
+        yield DataTable(id="log-table", cursor_type="row", zebra_stripes=False)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.title = "flow log"
+        table = self.query_one(DataTable)
+        table.add_columns("date", "habit", "value", "note")
+        self._load()
+
+    def _load(self) -> None:
+        since = self.today - timedelta(days=self.days - 1)
+        self.query_one("#log-title", Label).update(
+            f"log — last {self.days} days"
+        )
+        with db.session(self.db_path) as conn:
+            pairs = db.all_completions(conn, since=since)
+
+        table = self.query_one(DataTable)
+        table.clear()
+        if not pairs:
+            table.add_row("—", "no completions in window", "", "")
+            return
+        for c, h in pairs:
+            if c.value is not None:
+                val = f"{c.value:g}"
+                if h.unit:
+                    val += f" {h.unit}"
+            else:
+                val = "✓"
+            note = c.note or ""
+            if len(note) > 60:
+                note = note[:57] + "..."
+            table.add_row(c.date.isoformat(), h.name, val, note)
+
+    def action_go_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_shorter(self) -> None:
+        self.days = max(7, self.days - 7)
+        self._load()
+
+    def action_longer(self) -> None:
+        self.days = min(365, self.days + 7)
+        self._load()

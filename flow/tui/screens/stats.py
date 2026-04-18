@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
@@ -21,6 +22,9 @@ class StatsScreen(Screen):
         Binding("j", "cursor_down", "Down"),
         Binding("k", "cursor_up", "Up"),
         Binding("enter", "drill_down", "Details"),
+        Binding("l", "open_log", "Log"),
+        Binding("E", "open_export", "Export"),
+        Binding("A", "toggle_archived", "Toggle archived"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -57,6 +61,7 @@ class StatsScreen(Screen):
         self.db_path = db_path
         self.today = today or date.today()
         self.focus_habit = focus_habit
+        self.include_archived = False
         self.habits: list[Habit] = []
         self._completions: dict[int, list[Completion]] = {}
         self._momentums: dict[int, Momentum] = {}
@@ -77,10 +82,15 @@ class StatsScreen(Screen):
 
     def _load(self) -> None:
         with db.session(self.db_path) as conn:
-            self.habits = db.list_habits(conn)
+            self.habits = db.list_habits(conn, include_archived=self.include_archived)
             self._completions = {
                 h.id: db.completions_for_habit(conn, h.id) for h in self.habits
             }
+
+        title = "stats — last 30 days"
+        if self.include_archived:
+            title += " [dim](incl. archived)[/dim]"
+        self.query_one("#stats-title", Label).update(title)
 
         table = self.query_one(DataTable)
         table.clear()
@@ -89,8 +99,11 @@ class StatsScreen(Screen):
         for h in self.habits:
             mom = compute_momentum(h, self._completions[h.id], today=self.today)
             self._momentums[h.id] = mom
+            name = (
+                f"[dim]{h.name} (archived)[/dim]" if h.is_archived else h.name
+            )
             table.add_row(
-                h.name,
+                name,
                 f"{mom.score:.0f}",
                 mom.trend,
                 f"{mom.completion_rate:.0%}",
@@ -141,7 +154,8 @@ class StatsScreen(Screen):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.action_drill_down()
 
-    def action_drill_down(self) -> None:
+    @work
+    async def action_drill_down(self) -> None:
         table = self.query_one(DataTable)
         row = table.cursor_row
         if row is None or row < 0 or row >= len(self.habits):
@@ -149,7 +163,25 @@ class StatsScreen(Screen):
         from .detail import DetailScreen
 
         h = self.habits[row]
-        self.app.push_screen(DetailScreen(self.db_path, h, today=self.today))
+        await self.app.push_screen_wait(
+            DetailScreen(self.db_path, h, today=self.today)
+        )
+        self._load()
+
+    def action_open_log(self) -> None:
+        from .log import LogScreen
+
+        self.app.push_screen(LogScreen(self.db_path, today=self.today))
+
+    @work
+    async def action_open_export(self) -> None:
+        from .export import ExportScreen
+
+        await self.app.push_screen_wait(ExportScreen(self.db_path))
+
+    def action_toggle_archived(self) -> None:
+        self.include_archived = not self.include_archived
+        self._load()
 
     def action_quit(self) -> None:
         self.app.exit()

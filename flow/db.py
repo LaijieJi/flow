@@ -186,6 +186,14 @@ def archive_habit(conn: sqlite3.Connection, habit_id: int, when: date | None = N
     return cur.rowcount > 0
 
 
+def restore_habit(conn: sqlite3.Connection, habit_id: int) -> bool:
+    cur = conn.execute(
+        "UPDATE habits SET archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL",
+        (habit_id,),
+    )
+    return cur.rowcount > 0
+
+
 def update_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
     """Persist edits to an existing habit. Validates frequency. Requires `habit.id`."""
     if habit.id is None:

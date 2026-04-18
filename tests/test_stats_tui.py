@@ -220,6 +220,119 @@ async def test_detail_screen_escape_returns_to_stats(seeded_db: Path) -> None:
         assert isinstance(app.screen, StatsScreen)
 
 
+async def test_detail_archive_and_restore_toggle(seeded_db: Path) -> None:
+    today = date(2026, 4, 13)
+    with db.session(seeded_db) as conn:
+        read = [h for h in db.list_habits(conn) if h.name == "Read"][0]
+
+    app = FlowApp(db_path=seeded_db, initial="detail", today=today, detail_habit=read)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        with db.session(seeded_db) as conn:
+            h = db.get_habit(conn, read.id)
+        assert h.archived_at is not None
+        await pilot.press("x")
+        await pilot.pause()
+        with db.session(seeded_db) as conn:
+            h = db.get_habit(conn, read.id)
+        assert h.archived_at is None
+
+
+async def test_detail_edit_opens_modal(seeded_db: Path) -> None:
+    from flow.tui.screens.edit_habit import EditHabitScreen
+
+    today = date(2026, 4, 13)
+    with db.session(seeded_db) as conn:
+        read = [h for h in db.list_habits(conn) if h.name == "Read"][0]
+
+    app = FlowApp(db_path=seeded_db, initial="detail", today=today, detail_habit=read)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, EditHabitScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, DetailScreen)
+
+
+async def test_stats_log_binding_pushes_log_screen(seeded_db: Path) -> None:
+    from flow.tui.screens.log import LogScreen
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        assert isinstance(app.screen, LogScreen)
+
+
+async def test_stats_export_binding_pushes_export_screen(seeded_db: Path) -> None:
+    from flow.tui.screens.export import ExportScreen
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("E")
+        await pilot.pause()
+        assert isinstance(app.screen, ExportScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, StatsScreen)
+
+
+async def test_stats_toggle_archived_shows_archived_habit(seeded_db: Path) -> None:
+    with db.session(seeded_db) as conn:
+        read = [h for h in db.list_habits(conn) if h.name == "Read"][0]
+        db.archive_habit(conn, read.id)
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert all(not h.is_archived for h in app.screen.habits)
+        await pilot.press("A")
+        await pilot.pause()
+        assert any(h.is_archived for h in app.screen.habits)
+
+
+async def test_export_screen_writes_csv(seeded_db: Path, tmp_path: Path) -> None:
+    from flow.tui.screens.export import ExportScreen
+
+    out = tmp_path / "out.csv"
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("E")
+        await pilot.pause()
+        assert isinstance(app.screen, ExportScreen)
+        path_input = app.screen.query_one("#export-path")
+        path_input.value = str(out)
+        await pilot.pause()
+        app.screen._try_save()
+        await pilot.pause()
+
+    assert out.exists()
+    content = out.read_text()
+    assert "date,habit" in content
+    assert "Read" in content
+
+
+async def test_log_screen_lists_completions(seeded_db: Path) -> None:
+    from flow.tui.screens.log import LogScreen
+    from textual.widgets import DataTable
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        assert isinstance(app.screen, LogScreen)
+        table = app.screen.query_one(DataTable)
+        assert table.row_count > 0
+
+
 # ---- CLI wiring --------------------------------------------------------------
 
 
