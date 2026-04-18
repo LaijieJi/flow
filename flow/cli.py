@@ -80,10 +80,17 @@ def _parse_date_flag(value: str | None) -> date:
 # ---- commands -----------------------------------------------------------------
 
 
-@click.group(help="flow — momentum-based habit tracker.")
+@click.group(
+    help="flow — momentum-based habit tracker. Run `flow` (no args) to open the TUI.",
+    invoke_without_command=True,
+)
 @click.version_option(package_name="flow")
-def main() -> None:
-    pass
+@click.pass_context
+def main(ctx: click.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        from .tui.app import FlowApp
+
+        FlowApp().run()
 
 
 @main.command(help="Add a new habit.")

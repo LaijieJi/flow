@@ -25,6 +25,18 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
+        "Navigation (works on every screen)",
+        [
+            ("c", "jump to check screen"),
+            ("s", "jump to stats screen"),
+            ("l", "jump to completion log"),
+            ("t", "toggle light / dark theme"),
+            ("h", "show this help"),
+            ("escape", "back / close modal"),
+            ("q", "back, or quit from the home screen"),
+        ],
+    ),
+    (
         "Check screen — TUI",
         [
             ("j / k", "move cursor down / up"),
@@ -34,9 +46,6 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("a", "add a new habit"),
             ("u", "undo most recent completion"),
             ("r", "jump to a random scheduled-undone habit"),
-            ("t", "toggle light / dark theme"),
-            ("h", "show this help"),
-            ("q", "quit"),
         ],
     ),
     (
@@ -44,12 +53,8 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             ("j / k", "move cursor"),
             ("enter", "drill into habit detail"),
-            ("l", "completion log"),
             ("E", "export"),
             ("A", "toggle archived visibility"),
-            ("t", "toggle light / dark theme"),
-            ("h", "show this help"),
-            ("q", "quit"),
         ],
     ),
     (
@@ -57,7 +62,6 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             ("e", "edit habit"),
             ("x", "archive / restore"),
-            ("h", "show this help"),
             ("escape / q", "back"),
         ],
     ),

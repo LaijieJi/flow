@@ -15,6 +15,7 @@ from ... import db
 from ...models import Completion, Habit
 from ...momentum import compute_momentum, Momentum
 from ..widgets.completion_grid import CompletionGrid
+from ..widgets.navbar import NavBar
 
 
 class StatsScreen(Screen):
@@ -22,11 +23,13 @@ class StatsScreen(Screen):
         Binding("j", "cursor_down", "Down"),
         Binding("k", "cursor_up", "Up"),
         Binding("enter", "drill_down", "Details"),
-        Binding("l", "open_log", "Log"),
+        Binding("c", "nav_check", "Check", show=False),
+        Binding("l", "nav_log", "Log", show=False),
         Binding("E", "open_export", "Export"),
         Binding("A", "toggle_archived", "Toggle archived"),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
+        Binding("escape", "back", "Back", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -70,6 +73,7 @@ class StatsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
+        yield NavBar(current="stats")
         yield Label("stats — last 30 days", id="stats-title")
         yield DataTable(id="stats-table", cursor_type="row", zebra_stripes=False)
         yield CompletionGrid(id="grid")
@@ -170,10 +174,15 @@ class StatsScreen(Screen):
         )
         self._load()
 
-    def action_open_log(self) -> None:
-        from .log import LogScreen
+    def action_nav_check(self) -> None:
+        self.app.navigate_to("check")
 
-        self.app.push_screen(LogScreen(self.db_path, today=self.today))
+    def action_nav_log(self) -> None:
+        self.app.navigate_to("log")
+
+    def action_back(self) -> None:
+        if len(self.app.screen_stack) > 1:
+            self.app.pop_screen()
 
     @work
     async def action_open_export(self) -> None:

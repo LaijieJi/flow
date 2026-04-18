@@ -20,6 +20,7 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 from ... import db
 from ...models import Completion, Habit
 from ..widgets.habit_row import HabitRow
+from ..widgets.navbar import NavBar
 from .add_habit import AddHabitScreen
 from .prompt import PromptScreen
 
@@ -47,6 +48,9 @@ class CheckScreen(Screen):
         Binding("a", "add_habit", "Add"),
         Binding("u", "undo", "Undo"),
         Binding("r", "random", "Random"),
+        Binding("s", "nav_stats", "Stats", show=False),
+        Binding("l", "nav_log", "Log", show=False),
+        Binding("escape", "back", "Back", show=False),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
         Binding("q", "quit", "Quit"),
@@ -82,6 +86,7 @@ class CheckScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
+        yield NavBar(current="check")
         yield Label(
             f"Today's habits — {self.today:%A, %b %d}", id="title"
         )
@@ -251,6 +256,16 @@ class CheckScreen(Screen):
 
     def action_toggle_theme(self) -> None:
         self.app.toggle_theme()
+
+    def action_nav_stats(self) -> None:
+        self.app.navigate_to("stats")
+
+    def action_nav_log(self) -> None:
+        self.app.navigate_to("log")
+
+    def action_back(self) -> None:
+        if len(self.app.screen_stack) > 1:
+            self.app.pop_screen()
 
     def action_help(self) -> None:
         from .help import HelpScreen

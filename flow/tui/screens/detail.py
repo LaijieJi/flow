@@ -25,6 +25,9 @@ class DetailScreen(Screen):
         Binding("q", "go_back", "Back"),
         Binding("e", "edit", "Edit"),
         Binding("x", "archive_toggle", "Archive"),
+        Binding("c", "nav_check", "Check", show=False),
+        Binding("s", "nav_stats", "Stats", show=False),
+        Binding("l", "nav_log", "Log", show=False),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
     ]
@@ -131,6 +134,15 @@ class DetailScreen(Screen):
 
     def action_toggle_theme(self) -> None:
         self.app.toggle_theme()
+
+    def action_nav_check(self) -> None:
+        self.app.navigate_to("check")
+
+    def action_nav_stats(self) -> None:
+        self.app.navigate_to("stats")
+
+    def action_nav_log(self) -> None:
+        self.app.navigate_to("log")
 
     def action_help(self) -> None:
         from .help import HelpScreen

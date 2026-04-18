@@ -68,3 +68,35 @@ class FlowApp(App):
         """Flip dark <-> light and persist so the choice survives restarts."""
         self.dark = not self.dark
         _config.set_value("theme", "dark" if self.dark else "light")
+
+    # -- cross-screen navigation -----------------------------------------------
+
+    def navigate_to(self, target: str) -> None:
+        """Jump between top-level screens (check/stats/log) from anywhere.
+
+        If target is already somewhere in the screen stack, pop back to it so
+        the stack can't balloon from repeated navigation. Otherwise push a
+        fresh instance on top, which keeps escape-back semantics intuitive."""
+        from .screens.check import CheckScreen
+        from .screens.log import LogScreen
+        from .screens.stats import StatsScreen
+
+        cls_map = {
+            "check": CheckScreen,
+            "stats": StatsScreen,
+            "log": LogScreen,
+        }
+        target_cls = cls_map.get(target)
+        if target_cls is None:
+            raise ValueError(f"unknown navigation target: {target!r}")
+
+        if isinstance(self.screen, target_cls):
+            return  # already there
+
+        for i, s in enumerate(list(self.screen_stack)):
+            if isinstance(s, target_cls):
+                while len(self.screen_stack) - 1 > i:
+                    self.pop_screen()
+                return
+
+        self.push_screen(target_cls(self.db_path, today=self.today))

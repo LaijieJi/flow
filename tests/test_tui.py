@@ -322,6 +322,138 @@ async def test_theme_toggle_persists_to_config(
     assert _config.get("theme") == "light"
 
 
+# ---- navbar ------------------------------------------------------------------
+
+
+def test_navbar_highlights_current_tab() -> None:
+    from flow.tui.widgets.navbar import render_navbar
+
+    out = render_navbar("stats")
+    assert "reverse" in out  # current tab uses reverse styling
+    # All three tabs should appear
+    assert "check" in out and "stats" in out and "log" in out
+    # Activation keys visible for non-current
+    assert "[c]" in out and "[l]" in out
+
+
+@pytest.mark.asyncio
+async def test_navbar_rendered_on_check(seeded_db: Path) -> None:
+    from flow.tui.widgets.navbar import NavBar
+
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bars = list(app.screen.query(NavBar))
+        assert len(bars) == 1
+
+
+@pytest.mark.asyncio
+async def test_navbar_current_tab_updates_per_screen(seeded_db: Path) -> None:
+    from flow.tui.widgets.navbar import NavBar
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.screen.query_one(NavBar)
+        assert bar.current == "stats"
+        assert "reverse" in bar.rendered_text
+        assert " stats " in bar.rendered_text
+
+
+# ---- cross-screen navigation -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_to_stats_via_s_key(seeded_db: Path) -> None:
+    from flow.tui.screens.stats import StatsScreen
+
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, StatsScreen)
+
+
+@pytest.mark.asyncio
+async def test_check_to_log_via_l_key(seeded_db: Path) -> None:
+    from flow.tui.screens.log import LogScreen
+
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        assert isinstance(app.screen, LogScreen)
+
+
+@pytest.mark.asyncio
+async def test_stats_to_check_via_c_key(seeded_db: Path) -> None:
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert isinstance(app.screen, CheckScreen)
+
+
+@pytest.mark.asyncio
+async def test_log_to_stats_via_s_key(seeded_db: Path) -> None:
+    from flow.tui.screens.log import LogScreen
+    from flow.tui.screens.stats import StatsScreen
+
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.pause()
+        assert isinstance(app.screen, LogScreen)
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, StatsScreen)
+
+
+@pytest.mark.asyncio
+async def test_repeat_navigation_keeps_stack_shallow(seeded_db: Path) -> None:
+    """Bouncing c→s→c→s must not grow the screen stack unboundedly."""
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for key in ("s", "c", "s", "c", "s", "c"):
+            await pilot.press(key)
+            await pilot.pause()
+        assert len(app.screen_stack) <= 3  # base + at most one extra
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_same_screen_is_noop(seeded_db: Path) -> None:
+    """Pressing c while already on check shouldn't push a duplicate."""
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = len(app.screen_stack)
+        assert isinstance(app.screen, CheckScreen)
+        # Check doesn't bind 'c' but navigating via the API is a no-op too:
+        app.navigate_to("check")
+        await pilot.pause()
+        assert len(app.screen_stack) == before
+
+
+@pytest.mark.asyncio
+async def test_detail_to_check_via_c_key(seeded_db: Path) -> None:
+    """From a drill-in screen we can still jump to a top-level screen."""
+    today = date(2026, 4, 13)
+    with db.session(seeded_db) as conn:
+        read = [h for h in db.list_habits(conn) if h.name == "Read"][0]
+
+    app = FlowApp(db_path=seeded_db, initial="detail", today=today, detail_habit=read)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert isinstance(app.screen, CheckScreen)
+
+
 @pytest.mark.asyncio
 async def test_theme_light_is_applied_on_mount(
     seeded_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

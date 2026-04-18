@@ -637,3 +637,36 @@ def test_completion_prints_bash_snippet(runner: CliRunner, db_path: Path) -> Non
 def test_completion_rejects_unknown_shell(runner: CliRunner, db_path: Path) -> None:
     r = runner.invoke(main, ["completion", "powershell"])
     assert r.exit_code != 0
+
+
+# ---- bare `flow` launches TUI ------------------------------------------------
+
+
+def test_bare_flow_invokes_tui(
+    runner: CliRunner,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class _FakeApp:
+        def __init__(self, *args, **kwargs) -> None:
+            calls.append("init")
+
+        def run(self) -> None:
+            calls.append("run")
+
+    import flow.tui.app as tui_app
+
+    monkeypatch.setattr(tui_app, "FlowApp", _FakeApp)
+    r = runner.invoke(main, [])
+    assert r.exit_code == 0
+    assert calls == ["init", "run"]
+
+
+def test_flow_help_still_works(runner: CliRunner, db_path: Path) -> None:
+    """--help must not launch the TUI (Click short-circuits before callback)."""
+    r = runner.invoke(main, ["--help"])
+    assert r.exit_code == 0
+    assert "flow" in r.output
+    assert "Commands:" in r.output or "Options:" in r.output

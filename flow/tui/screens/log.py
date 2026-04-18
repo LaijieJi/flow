@@ -11,6 +11,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Label
 
 from ... import db
+from ..widgets.navbar import NavBar
 
 
 class LogScreen(Screen):
@@ -19,6 +20,10 @@ class LogScreen(Screen):
         Binding("q", "go_back", "Back"),
         Binding("bracket_left", "shorter", "-7d"),
         Binding("bracket_right", "longer", "+7d"),
+        Binding("c", "nav_check", "Check", show=False),
+        Binding("s", "nav_stats", "Stats", show=False),
+        Binding("t", "toggle_theme", "Theme"),
+        Binding("h", "help", "Help"),
     ]
 
     DEFAULT_CSS = """
@@ -48,6 +53,7 @@ class LogScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
+        yield NavBar(current="log")
         yield Label("", id="log-title")
         yield DataTable(id="log-table", cursor_type="row", zebra_stripes=False)
         yield Footer()
@@ -84,7 +90,24 @@ class LogScreen(Screen):
             table.add_row(c.date.isoformat(), h.name, val, note)
 
     def action_go_back(self) -> None:
-        self.app.pop_screen()
+        if len(self.app.screen_stack) > 1:
+            self.app.pop_screen()
+        else:
+            self.app.navigate_to("check")
+
+    def action_nav_check(self) -> None:
+        self.app.navigate_to("check")
+
+    def action_nav_stats(self) -> None:
+        self.app.navigate_to("stats")
+
+    def action_toggle_theme(self) -> None:
+        self.app.toggle_theme()
+
+    def action_help(self) -> None:
+        from .help import HelpScreen
+
+        self.app.push_screen(HelpScreen())
 
     def action_shorter(self) -> None:
         self.days = max(7, self.days - 7)
