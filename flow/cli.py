@@ -93,6 +93,23 @@ def main(ctx: click.Context) -> None:
         FlowApp().run()
 
 
+FREQUENCY_HELP = (
+    "daily | weekdays | weekly | mon,wed,fri | "
+    "monthly[:N|:last] | every:N"
+)
+
+
+def _parse_optional_date(value: str | None, flag: str) -> date | None:
+    if value is None:
+        return None
+    if value == "":
+        return None
+    try:
+        return dateparser.parse(value).date()
+    except (ValueError, TypeError, OverflowError) as e:
+        raise click.ClickException(f"invalid {flag} {value!r}: {e}")
+
+
 @main.command(help="Add a new habit.")
 @click.argument("name")
 @click.option(
@@ -100,19 +117,27 @@ def main(ctx: click.Context) -> None:
     "-f",
     default="daily",
     show_default=True,
-    help="daily | weekdays | weekly | comma-list like 'mon,wed,fri'",
+    help=FREQUENCY_HELP,
 )
 @click.option("--unit", default=None, help="e.g. minutes, pages, reps")
 @click.option(
     "--target", type=float, default=None, help="numeric target (requires --unit)"
 )
 @click.option("--description", "-d", default=None)
+@click.option(
+    "--start-date", default=None, help="seasonal start (YYYY-MM-DD, optional)"
+)
+@click.option(
+    "--end-date", default=None, help="seasonal end (YYYY-MM-DD, optional)"
+)
 def add(
     name: str,
     frequency: str,
     unit: str | None,
     target: float | None,
     description: str | None,
+    start_date: str | None,
+    end_date: str | None,
 ) -> None:
     try:
         parse_frequency(frequency)
@@ -120,6 +145,11 @@ def add(
         raise click.ClickException(str(e))
     if target is not None and unit is None:
         raise click.ClickException("--target requires --unit")
+
+    start = _parse_optional_date(start_date, "--start-date")
+    end = _parse_optional_date(end_date, "--end-date")
+    if start is not None and end is not None and end < start:
+        raise click.ClickException("--end-date cannot be before --start-date")
 
     with db.session() as conn:
         existing = [h for h in db.list_habits(conn, include_archived=True) if h.name.lower() == name.lower()]
@@ -131,6 +161,8 @@ def add(
             unit=unit,
             target=target,
             description=description,
+            start_date=start,
+            end_date=end,
         )
         db.insert_habit(conn, habit)
 
@@ -216,10 +248,16 @@ def list_cmd(show_all: bool, window: int) -> None:
 @main.command(help="Edit an existing habit. Pass empty string to clear a field.")
 @click.argument("habit")
 @click.option("--name", default=None, help="rename the habit")
-@click.option("--frequency", "-f", default=None, help="daily | weekdays | weekly | mon,wed,fri")
+@click.option("--frequency", "-f", default=None, help=FREQUENCY_HELP)
 @click.option("--unit", default=None, help="e.g. minutes, pages (empty string clears)")
 @click.option("--target", default=None, help="numeric target (empty string clears)")
 @click.option("--description", "-d", default=None, help="short description (empty string clears)")
+@click.option(
+    "--start-date", default=None, help="seasonal start (YYYY-MM-DD, empty clears)"
+)
+@click.option(
+    "--end-date", default=None, help="seasonal end (YYYY-MM-DD, empty clears)"
+)
 def edit(
     habit: str,
     name: str | None,
@@ -227,12 +265,15 @@ def edit(
     unit: str | None,
     target: str | None,
     description: str | None,
+    start_date: str | None,
+    end_date: str | None,
 ) -> None:
     with db.session() as conn:
         h = _resolve_habit(conn, habit, include_archived=True)
 
         no_flags = all(
-            v is None for v in (name, frequency, unit, target, description)
+            v is None
+            for v in (name, frequency, unit, target, description, start_date, end_date)
         )
         if no_flags:
             initial = h.description or ""
@@ -268,6 +309,16 @@ def edit(
                         raise click.ClickException(f"invalid --target {target!r}")
             if description is not None:
                 h.description = description or None
+            if start_date is not None:
+                h.start_date = _parse_optional_date(start_date, "--start-date")
+            if end_date is not None:
+                h.end_date = _parse_optional_date(end_date, "--end-date")
+            if (
+                h.start_date is not None
+                and h.end_date is not None
+                and h.end_date < h.start_date
+            ):
+                raise click.ClickException("--end-date cannot be before --start-date")
             if h.target is not None and h.unit is None:
                 raise click.ClickException("--target requires --unit")
 

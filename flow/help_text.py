@@ -44,8 +44,30 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("v", "set numeric value"),
             ("n", "add / edit note"),
             ("a", "add a new habit"),
+            ("e", "edit highlighted habit (works on off-days too)"),
             ("u", "undo most recent completion"),
             ("r", "jump to a random scheduled-undone habit"),
+        ],
+    ),
+    (
+        "Frequency formats",
+        [
+            ("daily", "every day"),
+            ("weekdays", "Mon–Fri"),
+            ("weekly", "Mondays"),
+            ("mon,wed,fri", "any subset of weekday tokens"),
+            ("monthly", "1st of each month"),
+            ("monthly:15", "Nth day (29–31 auto-clamp to month length)"),
+            ("monthly:last", "last day of each month"),
+            ("every:3", "every N days, anchored on created_at"),
+        ],
+    ),
+    (
+        "Seasonal windows",
+        [
+            ("--start-date", "habit is not scheduled before this date"),
+            ("--end-date", "habit is not scheduled after this date"),
+            ("TUI", "set start/end date fields in add or edit form"),
         ],
     ),
     (

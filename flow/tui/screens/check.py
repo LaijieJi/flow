@@ -22,6 +22,7 @@ from ...models import Completion, Habit
 from ..widgets.habit_row import HabitRow
 from ..widgets.navbar import NavBar
 from .add_habit import AddHabitScreen
+from .edit_habit import EditHabitScreen
 from .prompt import PromptScreen
 
 
@@ -46,6 +47,7 @@ class CheckScreen(Screen):
         Binding("v", "set_value", "Value"),
         Binding("n", "add_note", "Note"),
         Binding("a", "add_habit", "Add"),
+        Binding("e", "edit_habit", "Edit"),
         Binding("u", "undo", "Undo"),
         Binding("r", "random", "Random"),
         Binding("s", "nav_stats", "Stats", show=False),
@@ -142,6 +144,23 @@ class CheckScreen(Screen):
         )
         if result is not None:
             self._reload(focus_add_row=True)
+
+    @work
+    async def action_edit_habit(self) -> None:
+        """Edit the highlighted habit regardless of scheduled state.
+
+        Editing is habit-level (frequency, name, window), so it's allowed on
+        days the habit is not scheduled — the ban on logging from an off-day
+        does not apply to metadata changes.
+        """
+        row = self._current_row()
+        if row is None:
+            return
+        result = await self.app.push_screen_wait(
+            EditHabitScreen(row.habit, db_path=self.db_path)
+        )
+        if result is not None:
+            self._reload()
 
     # -- toggle / value / note -------------------------------------------------
 

@@ -184,6 +184,68 @@ def test_session_commits_on_success(tmp_db: Path) -> None:
         assert len(db.list_habits(conn)) == 1
 
 
+def test_insert_habit_with_seasonal_window(conn: sqlite3.Connection) -> None:
+    h = db.insert_habit(
+        conn,
+        Habit(
+            name="Summer",
+            frequency="daily",
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 8, 31),
+        ),
+    )
+    loaded = db.get_habit(conn, h.id)
+    assert loaded.start_date == date(2026, 6, 1)
+    assert loaded.end_date == date(2026, 8, 31)
+
+
+def test_insert_habit_rejects_end_before_start(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError):
+        db.insert_habit(
+            conn,
+            Habit(
+                name="Bad",
+                frequency="daily",
+                start_date=date(2026, 6, 1),
+                end_date=date(2026, 5, 1),
+            ),
+        )
+
+
+def test_update_habit_sets_and_clears_dates(conn: sqlite3.Connection) -> None:
+    h = db.insert_habit(conn, Habit(name="S", frequency="daily"))
+    h.start_date = date(2026, 3, 1)
+    h.end_date = date(2026, 4, 1)
+    db.update_habit(conn, h)
+    loaded = db.get_habit(conn, h.id)
+    assert loaded.start_date == date(2026, 3, 1)
+    assert loaded.end_date == date(2026, 4, 1)
+
+    loaded.start_date = None
+    loaded.end_date = None
+    db.update_habit(conn, loaded)
+    again = db.get_habit(conn, h.id)
+    assert again.start_date is None
+    assert again.end_date is None
+
+
+def test_update_habit_rejects_end_before_start(conn: sqlite3.Connection) -> None:
+    h = db.insert_habit(conn, Habit(name="S", frequency="daily"))
+    h.start_date = date(2026, 6, 1)
+    h.end_date = date(2026, 5, 1)
+    with pytest.raises(ValueError):
+        db.update_habit(conn, h)
+
+
+def test_monthly_and_every_frequencies_persist(conn: sqlite3.Connection) -> None:
+    a = db.insert_habit(conn, Habit(name="A", frequency="monthly:15"))
+    b = db.insert_habit(conn, Habit(name="B", frequency="every:5"))
+    loaded_a = db.get_habit(conn, a.id)
+    loaded_b = db.get_habit(conn, b.id)
+    assert loaded_a.frequency == "monthly:15"
+    assert loaded_b.frequency == "every:5"
+
+
 def test_session_rolls_back_on_error(tmp_db: Path) -> None:
     with pytest.raises(RuntimeError):
         with db.session(tmp_db) as conn:

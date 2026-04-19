@@ -57,6 +57,11 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_completions_habit_date ON completions(habit_id, date);
     """,
+    # v2: seasonal windows on habits
+    """
+    ALTER TABLE habits ADD COLUMN start_date DATE;
+    ALTER TABLE habits ADD COLUMN end_date   DATE;
+    """,
 ]
 
 
@@ -118,6 +123,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def _row_to_habit(row: sqlite3.Row) -> Habit:
+    keys = row.keys()
+    start_date = row["start_date"] if "start_date" in keys else None
+    end_date = row["end_date"] if "end_date" in keys else None
     return Habit(
         id=row["id"],
         name=row["name"],
@@ -127,6 +135,8 @@ def _row_to_habit(row: sqlite3.Row) -> Habit:
         target=row["target"],
         created_at=row["created_at"],
         archived_at=row["archived_at"],
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
@@ -145,9 +155,17 @@ def _row_to_completion(row: sqlite3.Row) -> Completion:
 
 def insert_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
     parse_frequency(habit.frequency)  # validate early
+    if (
+        habit.start_date is not None
+        and habit.end_date is not None
+        and habit.end_date < habit.start_date
+    ):
+        raise ValueError("end_date cannot be before start_date")
     cur = conn.execute(
-        "INSERT INTO habits (name, description, frequency, unit, target, created_at, archived_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO habits ("
+        "  name, description, frequency, unit, target, created_at, archived_at,"
+        "  start_date, end_date"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             habit.name,
             habit.description,
@@ -156,6 +174,8 @@ def insert_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
             habit.target,
             habit.created_at,
             habit.archived_at,
+            habit.start_date,
+            habit.end_date,
         ),
     )
     habit.id = cur.lastrowid
@@ -199,10 +219,25 @@ def update_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
     if habit.id is None:
         raise ValueError("update_habit requires habit.id")
     parse_frequency(habit.frequency)
+    if (
+        habit.start_date is not None
+        and habit.end_date is not None
+        and habit.end_date < habit.start_date
+    ):
+        raise ValueError("end_date cannot be before start_date")
     cur = conn.execute(
-        "UPDATE habits SET name = ?, description = ?, frequency = ?, unit = ?, target = ? "
-        "WHERE id = ?",
-        (habit.name, habit.description, habit.frequency, habit.unit, habit.target, habit.id),
+        "UPDATE habits SET name = ?, description = ?, frequency = ?, unit = ?, "
+        "target = ?, start_date = ?, end_date = ? WHERE id = ?",
+        (
+            habit.name,
+            habit.description,
+            habit.frequency,
+            habit.unit,
+            habit.target,
+            habit.start_date,
+            habit.end_date,
+            habit.id,
+        ),
     )
     if cur.rowcount == 0:
         raise LookupError(f"habit id {habit.id} not found")
@@ -280,7 +315,8 @@ def all_completions(
     sql = (
         "SELECT c.*, h.name AS h_name, h.description AS h_description, "
         "h.frequency AS h_frequency, h.unit AS h_unit, h.target AS h_target, "
-        "h.created_at AS h_created_at, h.archived_at AS h_archived_at "
+        "h.created_at AS h_created_at, h.archived_at AS h_archived_at, "
+        "h.start_date AS h_start_date, h.end_date AS h_end_date "
         "FROM completions c JOIN habits h ON h.id = c.habit_id"
     )
     clauses: list[str] = []
@@ -316,6 +352,8 @@ def all_completions(
             target=r["h_target"],
             created_at=r["h_created_at"],
             archived_at=r["h_archived_at"],
+            start_date=r["h_start_date"],
+            end_date=r["h_end_date"],
         )
         out.append((completion, habit))
     return out
@@ -329,7 +367,8 @@ def most_recent_completion(
     sql = (
         "SELECT c.*, h.name AS h_name, h.description AS h_description, "
         "h.frequency AS h_frequency, h.unit AS h_unit, h.target AS h_target, "
-        "h.created_at AS h_created_at, h.archived_at AS h_archived_at "
+        "h.created_at AS h_created_at, h.archived_at AS h_archived_at, "
+        "h.start_date AS h_start_date, h.end_date AS h_end_date "
         "FROM completions c JOIN habits h ON h.id = c.habit_id"
     )
     params: list = []
@@ -356,6 +395,8 @@ def most_recent_completion(
         target=row["h_target"],
         created_at=row["h_created_at"],
         archived_at=row["h_archived_at"],
+        start_date=row["h_start_date"],
+        end_date=row["h_end_date"],
     )
     return completion, habit
 

@@ -20,8 +20,6 @@ class HabitRow(ListItem):
         self.today = today
         self.completion = completion
         self.scheduled = habit.is_scheduled_on(today)
-        if not self.scheduled:
-            self.disabled = True
         self.add_class("unscheduled" if not self.scheduled else "scheduled")
 
     def compose(self) -> ComposeResult:

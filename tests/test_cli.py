@@ -77,6 +77,125 @@ def test_add_custom_days_frequency(runner: CliRunner, db_path: Path) -> None:
     assert r.exit_code == 0, r.output
 
 
+def test_add_monthly_frequency(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["add", "Rent", "-f", "monthly:1"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.frequency == "monthly:1"
+
+
+def test_add_monthly_last(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["add", "Review", "-f", "monthly:last"])
+    assert r.exit_code == 0, r.output
+
+
+def test_add_every_n_frequency(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["add", "Walk", "-f", "every:3"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.frequency == "every:3"
+
+
+def test_add_monthly_day_out_of_range_rejected(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["add", "X", "-f", "monthly:32"])
+    assert r.exit_code != 0
+
+
+def test_add_every_zero_rejected(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["add", "X", "-f", "every:0"])
+    assert r.exit_code != 0
+
+
+def test_add_with_seasonal_window(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(
+        main,
+        [
+            "add", "Summer", "-f", "daily",
+            "--start-date", "2026-06-01",
+            "--end-date", "2026-08-31",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.start_date == date(2026, 6, 1)
+    assert h.end_date == date(2026, 8, 31)
+
+
+def test_add_end_before_start_rejected(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(
+        main,
+        [
+            "add", "Bad", "-f", "daily",
+            "--start-date", "2026-06-01",
+            "--end-date", "2026-05-01",
+        ],
+    )
+    assert r.exit_code != 0
+    assert "before" in r.output.lower()
+
+
+def test_add_invalid_date_rejected(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(
+        main,
+        ["add", "Bad", "-f", "daily", "--start-date", "not-a-date"],
+    )
+    assert r.exit_code != 0
+    assert "invalid" in r.output.lower()
+
+
+def test_edit_seasonal_window(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Habit"])
+    r = runner.invoke(
+        main,
+        [
+            "edit", "Habit",
+            "--start-date", "2026-07-01",
+            "--end-date", "2026-09-30",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.start_date == date(2026, 7, 1)
+    assert h.end_date == date(2026, 9, 30)
+
+
+def test_edit_clear_seasonal_window(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(
+        main,
+        [
+            "add", "Habit",
+            "--start-date", "2026-07-01",
+            "--end-date", "2026-09-30",
+        ],
+    )
+    r = runner.invoke(
+        main, ["edit", "Habit", "--start-date", "", "--end-date", ""]
+    )
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+    assert h.start_date is None
+    assert h.end_date is None
+
+
+def test_edit_end_before_start_rejected(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "H"])
+    r = runner.invoke(
+        main,
+        [
+            "edit", "H",
+            "--start-date", "2026-06-01",
+            "--end-date", "2026-05-01",
+        ],
+    )
+    assert r.exit_code != 0
+    assert "before" in r.output.lower()
+
+
 # ---- list ---------------------------------------------------------------------
 
 

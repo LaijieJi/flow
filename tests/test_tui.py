@@ -454,6 +454,94 @@ async def test_detail_to_check_via_c_key(seeded_db: Path) -> None:
         assert isinstance(app.screen, CheckScreen)
 
 
+# ---- edit habit from check screen (e key) -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_e_on_check_opens_edit_screen(seeded_db: Path) -> None:
+    from flow.tui.screens.edit_habit import EditHabitScreen
+
+    app = FlowApp(db_path=seeded_db, today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, EditHabitScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, CheckScreen)
+
+
+@pytest.mark.asyncio
+async def test_e_edits_unscheduled_habit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editing must work on a habit that is not scheduled today — metadata
+    changes are habit-level, not date-level."""
+    from flow.tui.screens.edit_habit import EditHabitScreen
+
+    path = tmp_path / "e.db"
+    monkeypatch.setenv("FLOW_DB_PATH", str(path))
+    with db.session(path) as conn:
+        db.insert_habit(conn, Habit(name="TueOnly", frequency="tue"))
+
+    thursday = date(2026, 4, 16)
+    app = FlowApp(db_path=path, today=thursday)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # The sole habit row is unscheduled on Thursday. Move cursor to it.
+        lv = app.screen.query_one("#rows")
+        # Index 0 is the "+" row; index 1 is the unscheduled habit row
+        assert len(lv.children) == 2
+        lv.index = 1
+        await pilot.pause()
+        row = lv.children[1]
+        assert isinstance(row, HabitRow)
+        assert not row.scheduled
+
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, EditHabitScreen)
+
+
+@pytest.mark.asyncio
+async def test_unscheduled_row_toggle_still_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unscheduled rows are reachable for editing but space must not log."""
+    path = tmp_path / "u.db"
+    monkeypatch.setenv("FLOW_DB_PATH", str(path))
+    with db.session(path) as conn:
+        db.insert_habit(conn, Habit(name="TueOnly", frequency="tue"))
+
+    thursday = date(2026, 4, 16)
+    app = FlowApp(db_path=path, today=thursday)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        lv = app.screen.query_one("#rows")
+        lv.index = 1
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause()
+
+    with db.session(path) as conn:
+        assert db.completions_on(conn, thursday) == []
+
+
+# ---- seasonal windows --------------------------------------------------------
+
+
+def test_habit_row_unscheduled_when_outside_season() -> None:
+    h = Habit(
+        name="Summer",
+        frequency="daily",
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 8, 31),
+    )
+    row = HabitRow(h, today=date(2026, 4, 13))  # April, before season
+    assert not row.scheduled
+
+
 @pytest.mark.asyncio
 async def test_theme_light_is_applied_on_mount(
     seeded_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

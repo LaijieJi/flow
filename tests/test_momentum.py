@@ -279,6 +279,74 @@ class TestComputeMomentum:
         # EMA score for steady 0.5 strength approaches 50
         assert 40.0 < mom.score < 55.0
 
+    def test_monthly_first(self) -> None:
+        h = Habit(name="M", frequency="monthly")
+        assert h.is_scheduled_on(date(2026, 4, 1)) is True
+        assert h.is_scheduled_on(date(2026, 4, 2)) is False
+
+    def test_monthly_specific_day(self) -> None:
+        h = Habit(name="M", frequency="monthly:15")
+        assert h.is_scheduled_on(date(2026, 4, 15)) is True
+        assert h.is_scheduled_on(date(2026, 4, 16)) is False
+
+    def test_monthly_day_clamps_to_month_length(self) -> None:
+        h = Habit(name="M", frequency="monthly:31")
+        # Feb 2026 has 28 days -> clamped to Feb 28
+        assert h.is_scheduled_on(date(2026, 2, 28)) is True
+        assert h.is_scheduled_on(date(2026, 2, 27)) is False
+        # April has 30 days -> clamped to the 30th
+        assert h.is_scheduled_on(date(2026, 4, 30)) is True
+        assert h.is_scheduled_on(date(2026, 4, 29)) is False
+
+    def test_monthly_last(self) -> None:
+        h = Habit(name="M", frequency="monthly:last")
+        assert h.is_scheduled_on(date(2026, 2, 28)) is True
+        assert h.is_scheduled_on(date(2026, 3, 31)) is True
+        assert h.is_scheduled_on(date(2026, 4, 30)) is True
+        assert h.is_scheduled_on(date(2026, 4, 29)) is False
+
+    def test_every_n_days_calendar_anchored(self) -> None:
+        start = date(2026, 4, 1)
+        h = Habit(name="E", frequency="every:3", created_at=start)
+        assert h.is_scheduled_on(start) is True
+        assert h.is_scheduled_on(start + timedelta(days=3)) is True
+        assert h.is_scheduled_on(start + timedelta(days=2)) is False
+        assert h.is_scheduled_on(start + timedelta(days=9)) is True
+        # Before created_at -> never scheduled
+        assert h.is_scheduled_on(start - timedelta(days=1)) is False
+
+    def test_seasonal_window_before_start_not_scheduled(self) -> None:
+        h = Habit(
+            name="Summer",
+            frequency="daily",
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 8, 31),
+        )
+        assert h.is_scheduled_on(date(2026, 5, 31)) is False
+        assert h.is_scheduled_on(date(2026, 6, 1)) is True
+        assert h.is_scheduled_on(date(2026, 8, 31)) is True
+        assert h.is_scheduled_on(date(2026, 9, 1)) is False
+
+    def test_seasonal_window_only_start(self) -> None:
+        h = Habit(name="S", frequency="daily", start_date=date(2026, 4, 15))
+        assert h.is_scheduled_on(date(2026, 4, 14)) is False
+        assert h.is_scheduled_on(date(2026, 4, 15)) is True
+        assert h.is_scheduled_on(date(2030, 1, 1)) is True
+
+    def test_monthly_in_scheduled_days_between(self) -> None:
+        h = Habit(name="M", frequency="monthly:1")
+        days = m.scheduled_days_between(h, date(2026, 1, 1), date(2026, 4, 30))
+        assert days == [
+            date(2026, 1, 1), date(2026, 2, 1), date(2026, 3, 1), date(2026, 4, 1),
+        ]
+
+    def test_every_in_scheduled_days_between(self) -> None:
+        h = Habit(name="E", frequency="every:2", created_at=date(2026, 4, 1))
+        days = m.scheduled_days_between(h, date(2026, 4, 1), date(2026, 4, 8))
+        assert days == [
+            date(2026, 4, 1), date(2026, 4, 3), date(2026, 4, 5), date(2026, 4, 7),
+        ]
+
     def test_respects_frequency_no_decay_on_unscheduled_days(self) -> None:
         today = date(2026, 4, 13)  # Monday
         start = today - timedelta(days=27)  # Two weeks prior, Tuesday
