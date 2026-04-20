@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import config as _config, db, export as _export, help_text
-from .models import Completion, Habit, parse_frequency
+from .models import Completion, Habit, format_duration, parse_duration, parse_frequency
 from .momentum import compute_momentum
 
 
@@ -173,36 +173,85 @@ def add(
     console.print(summary)
 
 
+_TIME_UNITS = {"minutes", "minute", "min", "mins", "hours", "hour", "hr", "hrs"}
+
+
+def _value_from_duration(unit: str | None, duration_seconds: int) -> float | None:
+    """For time-unit habits, derive a numeric value from a recorded duration.
+
+    'minutes'-style units → float minutes; 'hours'-style → float hours.
+    Anything else: leave value untouched (caller supplies --value explicitly).
+    """
+    if unit is None:
+        return None
+    u = unit.lower()
+    if u in {"minutes", "minute", "min", "mins"}:
+        return duration_seconds / 60
+    if u in {"hours", "hour", "hr", "hrs"}:
+        return duration_seconds / 3600
+    return None
+
+
 @main.command(help="Mark a habit complete.")
 @click.argument("habit")
 @click.option("--value", type=float, default=None, help="numeric value (for target habits)")
 @click.option("--note", default=None, help="short reflection (max 280 chars)")
+@click.option(
+    "--duration",
+    "duration_str",
+    default=None,
+    help="time spent (e.g. 25m, 1h30m, 90s, 1:30)",
+)
 @click.option("--date", "date_str", default=None, help="override completion date")
 def done(
     habit: str,
     value: float | None,
     note: str | None,
+    duration_str: str | None,
     date_str: str | None,
 ) -> None:
     on = _parse_date_flag(date_str)
     if note is not None and len(note) > Habit.NOTE_MAX:
         raise click.ClickException(f"note too long (max {Habit.NOTE_MAX} chars)")
 
+    duration_seconds: int | None = None
+    if duration_str is not None:
+        try:
+            duration_seconds = parse_duration(duration_str)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+
     with db.session() as conn:
         h = _resolve_habit(conn, habit, include_archived=True)
         if h.is_archived:
             raise click.ClickException(f"{h.name} is archived — restore first")
+        if value is None and duration_seconds is not None:
+            derived = _value_from_duration(h.unit, duration_seconds)
+            if derived is not None:
+                value = derived
         if value is not None and h.target is None:
             err_console.print(
                 f"[yellow]warn:[/yellow] {h.name} has no target; value recorded but won't scale momentum"
             )
         db.upsert_completion(
-            conn, Completion(habit_id=h.id, date=on, value=value, note=note)
+            conn,
+            Completion(
+                habit_id=h.id,
+                date=on,
+                value=value,
+                note=note,
+                duration_seconds=duration_seconds,
+            ),
         )
 
     display = "today" if on == date.today() else on.isoformat()
-    val_str = f" [dim]({value} {h.unit or ''})[/dim]" if value is not None else ""
-    console.print(f"[green]✓[/green] {h.name}{val_str} [dim]— {display}[/dim]")
+    bits: list[str] = []
+    if value is not None:
+        bits.append(f"{value:g} {h.unit or ''}".strip())
+    if duration_seconds is not None:
+        bits.append(format_duration(duration_seconds))
+    suffix = f" [dim]({', '.join(bits)})[/dim]" if bits else ""
+    console.print(f"[green]✓[/green] {h.name}{suffix} [dim]— {display}[/dim]")
 
 
 @main.command("list", help="List habits with momentum.")
@@ -351,6 +400,7 @@ def log(habit: str | None, days: int) -> None:
         table.add_column("date", style="dim")
         table.add_column("habit")
         table.add_column("value", justify="right")
+        table.add_column("time", justify="right", style="dim")
         table.add_column("note", style="dim")
 
         for c, h in pairs:
@@ -360,7 +410,13 @@ def log(habit: str | None, days: int) -> None:
                     val += f" {h.unit}"
             else:
                 val = "✓"
-            table.add_row(c.date.isoformat(), h.name, val, c.note or "")
+            table.add_row(
+                c.date.isoformat(),
+                h.name,
+                val,
+                format_duration(c.duration_seconds),
+                c.note or "",
+            )
         console.print(table)
 
 

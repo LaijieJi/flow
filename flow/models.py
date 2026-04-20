@@ -168,7 +168,92 @@ class Completion:
     id: int | None = None
     value: float | None = None
     note: str | None = None
+    duration_seconds: int | None = None
 
     def __post_init__(self) -> None:
         if self.note is not None and len(self.note) > Habit.NOTE_MAX:
             raise ValueError(f"note exceeds {Habit.NOTE_MAX} chars")
+        if self.duration_seconds is not None and self.duration_seconds < 0:
+            raise ValueError("duration_seconds must be >= 0")
+
+
+_DURATION_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
+
+
+def parse_duration(text: str) -> int:
+    """Parse a human duration into seconds.
+
+    Accepted forms:
+      '25m' | '1h' | '1h30m' | '90s' | '1:30' (mm:ss) | '1:30:00' (h:mm:ss)
+      '25' (bare int -> minutes, the habit-tracking default)
+
+    Raises ValueError on empty / invalid input or negative totals.
+    """
+    if text is None:
+        raise ValueError("empty duration")
+    s = text.strip().lower()
+    if not s:
+        raise ValueError("empty duration")
+
+    if ":" in s:
+        parts = s.split(":")
+        if len(parts) not in (2, 3):
+            raise ValueError(f"invalid duration {text!r}")
+        try:
+            nums = [int(p) for p in parts]
+        except ValueError:
+            raise ValueError(f"invalid duration {text!r}")
+        if any(n < 0 for n in nums):
+            raise ValueError(f"invalid duration {text!r}")
+        if len(nums) == 2:
+            return nums[0] * 60 + nums[1]
+        return nums[0] * 3600 + nums[1] * 60 + nums[2]
+
+    if s.lstrip("-").isdigit():
+        n = int(s)
+        if n < 0:
+            raise ValueError(f"invalid duration {text!r}")
+        return n * 60
+
+    total = 0
+    num = ""
+    seen_units: set[str] = set()
+    for ch in s:
+        if ch.isdigit():
+            num += ch
+            continue
+        if ch in _DURATION_UNIT_SECONDS:
+            if not num:
+                raise ValueError(f"invalid duration {text!r}")
+            if ch in seen_units:
+                raise ValueError(f"invalid duration {text!r}")
+            seen_units.add(ch)
+            total += int(num) * _DURATION_UNIT_SECONDS[ch]
+            num = ""
+            continue
+        raise ValueError(f"invalid duration {text!r}")
+    if num:
+        raise ValueError(f"invalid duration {text!r}")
+    if not seen_units:
+        raise ValueError(f"invalid duration {text!r}")
+    return total
+
+
+def format_duration(seconds: int | None) -> str:
+    """Compact display (e.g. '25m', '1h30m', '45s'). Empty string if None."""
+    if seconds is None:
+        return ""
+    if seconds < 0:
+        return ""
+    if seconds < 60:
+        return f"{seconds}s"
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts: list[str] = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s and not h:
+        parts.append(f"{s}s")
+    return "".join(parts) or f"{seconds}s"

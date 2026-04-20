@@ -18,7 +18,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from ... import db
-from ...models import Completion, Habit
+from ...models import Completion, Habit, parse_duration
 from ..widgets.habit_row import HabitRow
 from ..widgets.navbar import NavBar
 from .add_habit import AddHabitScreen
@@ -45,6 +45,7 @@ class CheckScreen(Screen):
         Binding("k", "cursor_up", "Up"),
         Binding("space", "toggle", "Toggle"),
         Binding("v", "set_value", "Value"),
+        Binding("d", "set_duration", "Time"),
         Binding("n", "add_note", "Note"),
         Binding("a", "add_habit", "Add"),
         Binding("e", "edit_habit", "Edit"),
@@ -214,8 +215,60 @@ class CheckScreen(Screen):
             return
 
         with db.session(self.db_path) as conn:
-            note = row.completion.note if row.completion else None
-            c = Completion(habit_id=h.id, date=self.today, value=value, note=note)
+            existing = row.completion
+            note = existing.note if existing else None
+            dur = existing.duration_seconds if existing else None
+            c = Completion(
+                habit_id=h.id,
+                date=self.today,
+                value=value,
+                note=note,
+                duration_seconds=dur,
+            )
+            db.upsert_completion(conn, c)
+            row.completion = c
+        row.refresh_text()
+
+    @work
+    async def action_set_duration(self) -> None:
+        row = self._current_row()
+        if row is None or not row.scheduled:
+            return
+        h = row.habit
+        initial = ""
+        if row.completion is not None and row.completion.duration_seconds is not None:
+            from ...models import format_duration
+
+            initial = format_duration(row.completion.duration_seconds)
+        answer = await self.app.push_screen_wait(
+            PromptScreen(
+                f"time for {h.name}",
+                initial=initial,
+                placeholder="25m | 1h30m | 90s | 1:30",
+            )
+        )
+        if answer is None:
+            return
+        text = answer.strip()
+        if not text:
+            return
+        try:
+            seconds = parse_duration(text)
+        except ValueError as e:
+            self.notify(str(e), severity="warning", timeout=3)
+            return
+
+        with db.session(self.db_path) as conn:
+            existing = row.completion
+            value = existing.value if existing else None
+            note = existing.note if existing else None
+            c = Completion(
+                habit_id=h.id,
+                date=self.today,
+                value=value,
+                note=note,
+                duration_seconds=seconds,
+            )
             db.upsert_completion(conn, c)
             row.completion = c
         row.refresh_text()
@@ -241,9 +294,17 @@ class CheckScreen(Screen):
             return
 
         with db.session(self.db_path) as conn:
-            value = row.completion.value if row.completion else None
+            existing = row.completion
+            value = existing.value if existing else None
+            dur = existing.duration_seconds if existing else None
             note = text or None
-            c = Completion(habit_id=row.habit.id, date=self.today, value=value, note=note)
+            c = Completion(
+                habit_id=row.habit.id,
+                date=self.today,
+                value=value,
+                note=note,
+                duration_seconds=dur,
+            )
             db.upsert_completion(conn, c)
             row.completion = c
         row.refresh_text()

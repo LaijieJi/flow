@@ -62,6 +62,10 @@ MIGRATIONS: list[str] = [
     ALTER TABLE habits ADD COLUMN start_date DATE;
     ALTER TABLE habits ADD COLUMN end_date   DATE;
     """,
+    # v3: time tracking — duration (seconds) on completions
+    """
+    ALTER TABLE completions ADD COLUMN duration_seconds INTEGER;
+    """,
 ]
 
 
@@ -141,12 +145,15 @@ def _row_to_habit(row: sqlite3.Row) -> Habit:
 
 
 def _row_to_completion(row: sqlite3.Row) -> Completion:
+    keys = row.keys()
+    duration = row["duration_seconds"] if "duration_seconds" in keys else None
     return Completion(
         id=row["id"],
         habit_id=row["habit_id"],
         date=row["date"],
         value=row["value"],
         note=row["note"],
+        duration_seconds=duration,
     )
 
 
@@ -263,9 +270,18 @@ def upsert_completion(conn: sqlite3.Connection, completion: Completion) -> Compl
     """Insert or replace today's completion for a habit (enforced unique on
     (habit_id, date)). Returns the stored row."""
     cur = conn.execute(
-        "INSERT INTO completions (habit_id, date, value, note) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(habit_id, date) DO UPDATE SET value = excluded.value, note = excluded.note",
-        (completion.habit_id, completion.date, completion.value, completion.note),
+        "INSERT INTO completions (habit_id, date, value, note, duration_seconds) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(habit_id, date) DO UPDATE SET "
+        "value = excluded.value, note = excluded.note, "
+        "duration_seconds = excluded.duration_seconds",
+        (
+            completion.habit_id,
+            completion.date,
+            completion.value,
+            completion.note,
+            completion.duration_seconds,
+        ),
     )
     if cur.lastrowid:
         completion.id = cur.lastrowid
@@ -342,6 +358,7 @@ def all_completions(
             date=r["date"],
             value=r["value"],
             note=r["note"],
+            duration_seconds=r["duration_seconds"],
         )
         habit = Habit(
             id=r["habit_id"],
@@ -385,6 +402,7 @@ def most_recent_completion(
         date=row["date"],
         value=row["value"],
         note=row["note"],
+        duration_seconds=row["duration_seconds"],
     )
     habit = Habit(
         id=row["habit_id"],
@@ -412,8 +430,12 @@ def bulk_insert_completions(
     conn: sqlite3.Connection, completions: Iterable[Completion]
 ) -> None:
     conn.executemany(
-        "INSERT INTO completions (habit_id, date, value, note) VALUES (?, ?, ?, ?)",
-        [(c.habit_id, c.date, c.value, c.note) for c in completions],
+        "INSERT INTO completions (habit_id, date, value, note, duration_seconds) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (c.habit_id, c.date, c.value, c.note, c.duration_seconds)
+            for c in completions
+        ],
     )
 
 

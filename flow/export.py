@@ -38,7 +38,16 @@ def write_csv(
     """Flat completion rows. Returns number of data rows written."""
     writer = csv.writer(out)
     writer.writerow(
-        ["date", "habit", "frequency", "unit", "target", "value", "note"]
+        [
+            "date",
+            "habit",
+            "frequency",
+            "unit",
+            "target",
+            "value",
+            "duration_seconds",
+            "note",
+        ]
     )
     rows = 0
     for h in _select_habits(conn, include_archived, habit_filter):
@@ -51,6 +60,7 @@ def write_csv(
                     h.unit or "",
                     "" if h.target is None else f"{h.target:g}",
                     "" if c.value is None else f"{c.value:g}",
+                    "" if c.duration_seconds is None else str(c.duration_seconds),
                     c.note or "",
                 ]
             )
@@ -84,6 +94,7 @@ def write_json(
                     {
                         "date": c.date.isoformat(),
                         "value": c.value,
+                        "duration_seconds": c.duration_seconds,
                         "note": c.note,
                     }
                     for c in db.completions_for_habit(conn, h.id)

@@ -7,7 +7,7 @@ from datetime import date
 from textual.app import ComposeResult
 from textual.widgets import ListItem, Static
 
-from ...models import Completion, Habit
+from ...models import Completion, Habit, format_duration
 
 
 class HabitRow(ListItem):
@@ -49,6 +49,8 @@ class HabitRow(ListItem):
                     parts.append(f"  [green]{c.value:g}{unit}[/green]")
             else:
                 parts.append("  [green]✓ done[/green]")
+            if c.duration_seconds is not None:
+                parts.append(f"  [cyan]{format_duration(c.duration_seconds)}[/cyan]")
             if c.note:
                 note = c.note if len(c.note) <= 48 else c.note[:45] + "..."
                 parts.append(f"  [dim italic]— {note}[/dim italic]")

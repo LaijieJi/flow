@@ -59,7 +59,16 @@ def test_csv_header_and_rows(seeded: Path) -> None:
     buf.seek(0)
     reader = csv.reader(buf)
     header = next(reader)
-    assert header == ["date", "habit", "frequency", "unit", "target", "value", "note"]
+    assert header == [
+        "date",
+        "habit",
+        "frequency",
+        "unit",
+        "target",
+        "value",
+        "duration_seconds",
+        "note",
+    ]
     rows = list(reader)
     assert len(rows) == n == 4  # 3 Exercise + 1 Read, Old is archived
 
@@ -84,7 +93,10 @@ def test_csv_empty_returns_header_only(tmp_path: Path) -> None:
     with db.session(path) as conn:
         n = flow_export.write_csv(conn, buf)
     assert n == 0
-    assert buf.getvalue().strip() == "date,habit,frequency,unit,target,value,note"
+    assert (
+        buf.getvalue().strip()
+        == "date,habit,frequency,unit,target,value,duration_seconds,note"
+    )
 
 
 def test_csv_include_archived(seeded: Path) -> None:
@@ -147,6 +159,7 @@ def test_json_structure(seeded: Path) -> None:
     assert read["completions"][0] == {
         "date": "2026-04-13",
         "value": 15.0,
+        "duration_seconds": None,
         "note": "focused",
     }
 
@@ -202,7 +215,7 @@ def test_cli_export_csv_default(cli_env: Path) -> None:
     r = runner.invoke(main, ["export"])
     assert r.exit_code == 0, r.output
     lines = r.output.strip().splitlines()
-    assert lines[0] == "date,habit,frequency,unit,target,value,note"
+    assert lines[0] == "date,habit,frequency,unit,target,value,duration_seconds,note"
     assert any("Exercise" in ln for ln in lines[1:])
 
 

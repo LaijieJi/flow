@@ -9,7 +9,7 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         "CLI commands",
         [
             ("flow add <name>", "create a new habit"),
-            ("flow done <habit>", "mark a habit complete today"),
+            ("flow done <habit>", "mark a habit complete today (--duration 25m logs time)"),
             ("flow undo [habit]", "reverse the most recent completion"),
             ("flow list", "show active habits with momentum"),
             ("flow edit <habit>", "rename / retarget / reschedule"),
@@ -42,6 +42,7 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("j / k", "move cursor down / up"),
             ("space", "toggle today's completion"),
             ("v", "set numeric value"),
+            ("d", "log time spent (e.g. 25m, 1h30m, 1:30)"),
             ("n", "add / edit note"),
             ("a", "add a new habit"),
             ("e", "edit highlighted habit (works on off-days too)"),

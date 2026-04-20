@@ -11,6 +11,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Label
 
 from ... import db
+from ...models import format_duration
 from ..widgets.navbar import NavBar
 
 
@@ -61,7 +62,7 @@ class LogScreen(Screen):
     def on_mount(self) -> None:
         self.title = "flow log"
         table = self.query_one(DataTable)
-        table.add_columns("date", "habit", "value", "note")
+        table.add_columns("date", "habit", "value", "time", "note")
         self._load()
 
     def _load(self) -> None:
@@ -75,7 +76,7 @@ class LogScreen(Screen):
         table = self.query_one(DataTable)
         table.clear()
         if not pairs:
-            table.add_row("—", "no completions in window", "", "")
+            table.add_row("—", "no completions in window", "", "", "")
             return
         for c, h in pairs:
             if c.value is not None:
@@ -87,7 +88,13 @@ class LogScreen(Screen):
             note = c.note or ""
             if len(note) > 60:
                 note = note[:57] + "..."
-            table.add_row(c.date.isoformat(), h.name, val, note)
+            table.add_row(
+                c.date.isoformat(),
+                h.name,
+                val,
+                format_duration(c.duration_seconds),
+                note,
+            )
 
     def action_go_back(self) -> None:
         if len(self.app.screen_stack) > 1:
