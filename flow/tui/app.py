@@ -25,6 +25,10 @@ class FlowApp(App):
         today: date | None = None,
         focus_habit: str | None = None,
         detail_habit: Habit | None = None,
+        pomo_habit: Habit | None = None,
+        pomo_work_seconds: int | None = None,
+        pomo_break_seconds: int | None = None,
+        pomo_cycles: int | None = None,
     ) -> None:
         super().__init__()
         self.db_path = db_path
@@ -32,6 +36,10 @@ class FlowApp(App):
         self.today = today
         self.focus_habit = focus_habit
         self.detail_habit = detail_habit
+        self.pomo_habit = pomo_habit
+        self.pomo_work_seconds = pomo_work_seconds
+        self.pomo_break_seconds = pomo_break_seconds
+        self.pomo_cycles = pomo_cycles
 
     def on_mount(self) -> None:
         self._apply_theme_from_config()
@@ -54,6 +62,22 @@ class FlowApp(App):
                 raise ValueError("detail initial requires detail_habit")
             self.push_screen(
                 DetailScreen(self.db_path, self.detail_habit, today=self.today)
+            )
+        elif self.initial == "pomo":
+            from .. import pomodoro as _pomo
+            from .screens.pomo import PomodoroScreen
+
+            self.push_screen(
+                PomodoroScreen(
+                    habit=self.pomo_habit,
+                    db_path=self.db_path,
+                    today=self.today,
+                    work_seconds=self.pomo_work_seconds or _pomo.DEFAULT_WORK_SECONDS,
+                    break_seconds=self.pomo_break_seconds
+                    if self.pomo_break_seconds is not None
+                    else _pomo.DEFAULT_BREAK_SECONDS,
+                    cycles=self.pomo_cycles or _pomo.DEFAULT_CYCLES,
+                )
             )
         else:
             raise ValueError(f"unknown initial screen: {self.initial!r}")

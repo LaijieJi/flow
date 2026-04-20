@@ -41,22 +41,26 @@ class AddHabitRow(ListItem):
 
 class CheckScreen(Screen):
     BINDINGS = [
-        Binding("j", "cursor_down", "Down"),
-        Binding("k", "cursor_up", "Up"),
+        # Shown in the footer — the primary check-in verbs.
         Binding("space", "toggle", "Toggle"),
         Binding("v", "set_value", "Value"),
         Binding("d", "set_duration", "Time"),
-        Binding("n", "add_note", "Note"),
+        Binding("p", "pomodoro", "Pomo"),
         Binding("a", "add_habit", "Add"),
         Binding("e", "edit_habit", "Edit"),
-        Binding("u", "undo", "Undo"),
-        Binding("r", "random", "Random"),
+        Binding("h", "help", "Help"),
+        # Hidden from the footer to keep it readable — all documented in `h`.
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("P", "pomodoro_free", "Free pomo", show=False),
+        Binding("n", "add_note", "Note", show=False),
+        Binding("u", "undo", "Undo", show=False),
+        Binding("r", "random", "Random", show=False),
         Binding("s", "nav_stats", "Stats", show=False),
         Binding("l", "nav_log", "Log", show=False),
         Binding("escape", "back", "Back", show=False),
-        Binding("t", "toggle_theme", "Theme"),
-        Binding("h", "help", "Help"),
-        Binding("q", "quit", "Quit"),
+        Binding("t", "toggle_theme", "Theme", show=False),
+        Binding("q", "quit", "Quit", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -98,6 +102,11 @@ class CheckScreen(Screen):
 
     def on_mount(self) -> None:
         self.title = "flow"
+        self._reload()
+
+    def on_screen_resume(self) -> None:
+        """Re-read state when returning from a sub-screen (e.g. pomo, detail)
+        so any completions logged elsewhere show up immediately."""
         self._reload()
 
     # -- data ------------------------------------------------------------------
@@ -308,6 +317,39 @@ class CheckScreen(Screen):
             db.upsert_completion(conn, c)
             row.completion = c
         row.refresh_text()
+
+    @work
+    async def action_pomodoro(self) -> None:
+        """Start a pomo tied to the highlighted habit. Shows a setup modal
+        pre-filled with defaults; Enter-through starts a standard 25/5."""
+        row = self._current_row()
+        if row is None or not row.scheduled:
+            return
+        await self._launch_pomo(row.habit)
+
+    @work
+    async def action_pomodoro_free(self) -> None:
+        """Start a free-running pomodoro with no habit attached — the timer
+        just rings the bell; nothing is logged."""
+        await self._launch_pomo(None)
+
+    async def _launch_pomo(self, habit: Habit | None) -> None:
+        from .pomo import PomodoroScreen
+        from .pomo_setup import PomodoroSetupScreen
+
+        settings = await self.app.push_screen_wait(PomodoroSetupScreen(habit=habit))
+        if settings is None:
+            return
+        self.app.push_screen(
+            PomodoroScreen(
+                habit=habit,
+                db_path=self.db_path,
+                today=self.today,
+                work_seconds=settings.work_seconds,
+                break_seconds=settings.break_seconds,
+                cycles=settings.cycles,
+            )
+        )
 
     def action_random(self) -> None:
         from textual.widgets import ListView

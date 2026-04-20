@@ -441,6 +441,64 @@ def stats(habit: str | None) -> None:
     FlowApp(initial="detail", detail_habit=h).run()
 
 
+@main.command(
+    help=(
+        "Pomodoro timer (TUI). Pass a habit to auto-log each completed work "
+        "session; omit it for a free-running timer that only rings the bell."
+    ),
+)
+@click.argument("habit", required=False)
+@click.option(
+    "--work",
+    "work_str",
+    default="25m",
+    show_default=True,
+    help="work phase length (e.g. 25m, 50m, 1h)",
+)
+@click.option(
+    "--break",
+    "break_str",
+    default="5m",
+    show_default=True,
+    help="break phase length (set to 0 to skip breaks)",
+)
+@click.option(
+    "--cycles", type=int, default=1, show_default=True, help="number of work/break cycles"
+)
+def pomo(habit: str | None, work_str: str, break_str: str, cycles: int) -> None:
+    if cycles < 1:
+        raise click.ClickException("--cycles must be >= 1")
+    try:
+        work_seconds = parse_duration(work_str)
+    except ValueError as e:
+        raise click.ClickException(f"--work: {e}")
+    if work_seconds < 1:
+        raise click.ClickException("--work must be > 0")
+    try:
+        break_seconds = 0 if break_str.strip() in {"0", "0s", "0m"} else parse_duration(break_str)
+    except ValueError as e:
+        raise click.ClickException(f"--break: {e}")
+    if break_seconds < 0:
+        raise click.ClickException("--break must be >= 0")
+
+    resolved: Habit | None = None
+    if habit is not None:
+        with db.session() as conn:
+            resolved = _resolve_habit(conn, habit, include_archived=False)
+            if resolved.is_archived:
+                raise click.ClickException(f"{resolved.name} is archived — restore first")
+
+    from .tui.app import FlowApp
+
+    FlowApp(
+        initial="pomo",
+        pomo_habit=resolved,
+        pomo_work_seconds=work_seconds,
+        pomo_break_seconds=break_seconds,
+        pomo_cycles=cycles,
+    ).run()
+
+
 @main.command(help="Export habit data (CSV or JSON). Stdout by default.")
 @click.option(
     "--format",
