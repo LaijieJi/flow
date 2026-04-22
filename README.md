@@ -10,7 +10,7 @@ Most habit trackers punish you for missing a day. One broken streak and motivati
 
 Requires Python 3.11+.
 
-Recommended — install globally with [pipx](https://pipx.pypa.io/) so `flow` is on your `PATH` in every shell:
+Recommended - install globally with [pipx](https://pipx.pypa.io/) so `flow` is on your `PATH` in every shell:
 
 ```bash
 pipx install .

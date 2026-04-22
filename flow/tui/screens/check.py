@@ -48,6 +48,7 @@ class CheckScreen(Screen):
         Binding("p", "pomodoro", "Pomo"),
         Binding("a", "add_habit", "Add"),
         Binding("e", "edit_habit", "Edit"),
+        Binding("x", "archive_habit", "Archive"),
         Binding("h", "help", "Help"),
         # Hidden from the footer to keep it readable — all documented in `h`.
         Binding("j", "cursor_down", "Down", show=False),
@@ -126,14 +127,23 @@ class CheckScreen(Screen):
         for h in habits:
             lv.append(HabitRow(h, self.today, comp_map.get(h.id)))
 
-        if focus_add_row or not habits:
-            lv.index = 0
-        else:
-            # Focus first scheduled habit row (index 1+)
-            for i, item in enumerate(lv.children):
-                if isinstance(item, HabitRow) and item.scheduled:
-                    lv.index = i
+        target_index = 0
+        if not focus_add_row and habits:
+            for i, h in enumerate(habits, start=1):
+                if h.is_scheduled_on(self.today):
+                    target_index = i
                     break
+
+        # ListView.clear()/append() schedule mount work on the next refresh,
+        # so setting `index` here races with child mounting — the assignment
+        # would clamp to None and the highlight wouldn't render until a
+        # keypress forced a redraw. Defer until after the refresh cycle so the
+        # children exist, then focus the list so the highlight is visible.
+        def _apply_initial_focus() -> None:
+            lv.index = target_index
+            lv.focus()
+
+        self.call_after_refresh(_apply_initial_focus)
 
     def _current_row(self) -> HabitRow | None:
         lv = self.query_one("#rows", ListView)
@@ -154,6 +164,27 @@ class CheckScreen(Screen):
         )
         if result is not None:
             self._reload(focus_add_row=True)
+
+    @work
+    async def action_archive_habit(self) -> None:
+        """Soft-delete the highlighted habit after a y/n confirm. Data is
+        preserved; restore via `flow restore <name>` from the CLI."""
+        row = self._current_row()
+        if row is None:
+            return
+        from .confirm import ConfirmScreen
+
+        ok = await self.app.push_screen_wait(
+            ConfirmScreen(f"archive [bold]{row.habit.name}[/bold]?")
+        )
+        if not ok:
+            return
+        with db.session(self.db_path) as conn:
+            if not db.archive_habit(conn, row.habit.id):
+                self.notify("already archived", severity="warning", timeout=2)
+                return
+        self.notify(f"archived {row.habit.name}", timeout=2)
+        self._reload()
 
     @work
     async def action_edit_habit(self) -> None:

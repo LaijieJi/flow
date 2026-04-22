@@ -49,6 +49,7 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("n", "add / edit note"),
             ("a", "add a new habit"),
             ("e", "edit highlighted habit (works on off-days too)"),
+            ("x", "archive highlighted habit (soft-delete; restore via CLI)"),
             ("u", "undo most recent completion"),
             ("r", "jump to a random scheduled-undone habit"),
         ],
