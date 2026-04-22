@@ -10,14 +10,33 @@ Most habit trackers punish you for missing a day. One broken streak and motivati
 
 Requires Python 3.11+.
 
-```bash
-pip install .
+Recommended — install globally with [pipx](https://pipx.pypa.io/) so `flow` is on your `PATH` in every shell:
 
-# if using uv
-uv sync
+```bash
+pipx install .
 ```
 
-This installs the `flow` command.
+Alternatives:
+
+```bash
+# plain pip (make sure the install target's bin/ is on your PATH)
+pip install --user .
+
+# uv — exposes `flow` as a managed tool
+uv tool install .
+
+# inside an activated venv
+pip install .
+```
+
+After any of these, `flow` is available as a command. Verify with:
+
+```bash
+flow --help
+which flow
+```
+
+If `flow: command not found`, add the install location to your `PATH` (e.g. `~/.local/bin` for `pip --user` / `pipx`, or `~/.local/share/uv/tools/bin` for `uv tool`).
 
 ## Quick start
 
@@ -187,9 +206,11 @@ Config lives next to it at `~/.flow/config.json`.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[dev]'     # editable install — `flow` points at your working copy
 pytest
 ```
+
+For a global dev command that tracks your working copy, use `pipx install --editable .` instead.
 
 ## License
 
