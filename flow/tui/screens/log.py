@@ -23,6 +23,7 @@ class LogScreen(Screen):
         Binding("bracket_right", "longer", "+7d"),
         Binding("c", "nav_check", "Check", show=False),
         Binding("s", "nav_stats", "Stats", show=False),
+        Binding("R", "nav_review", "Review", show=False),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
     ]
@@ -107,6 +108,9 @@ class LogScreen(Screen):
 
     def action_nav_stats(self) -> None:
         self.app.navigate_to("stats")
+
+    def action_nav_review(self) -> None:
+        self.app.navigate_to("review")
 
     def action_toggle_theme(self) -> None:
         self.app.toggle_theme()

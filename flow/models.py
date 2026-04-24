@@ -104,8 +104,12 @@ class Habit:
     archived_at: date | None = None
     start_date: date | None = None
     end_date: date | None = None
+    alpha: float = 0.3
 
     NOTE_MAX: ClassVar[int] = 280
+    ALPHA_DEFAULT: ClassVar[float] = 0.3
+    ALPHA_MIN: ClassVar[float] = 0.01
+    ALPHA_MAX: ClassVar[float] = 1.0
 
     def is_scheduled_on(self, day: date) -> bool:
         """Whether this habit is scheduled on the given date per its frequency

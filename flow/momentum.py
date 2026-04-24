@@ -163,16 +163,18 @@ def compute_momentum(
     completions: Iterable[Completion],
     today: date | None = None,
     window_days: int = DEFAULT_WINDOW_DAYS,
-    alpha: float = ALPHA,
+    alpha: float | None = None,
 ) -> Momentum:
     """Bundle score + trend + rate for one habit. `today` defaults to
-    `date.today()`; pass it explicitly for determinism in tests."""
+    `date.today()`; pass it explicitly for determinism in tests. `alpha`
+    defaults to the habit's configured smoothing factor."""
     today = today if today is not None else date.today()
     start = habit.created_at
     scheduled = scheduled_days_between(habit, start, today)
     strengths = strengths_by_date(completions, habit.target)
 
-    history = score_history(strengths, scheduled, alpha=alpha)
+    effective_alpha = alpha if alpha is not None else habit.alpha
+    history = score_history(strengths, scheduled, alpha=effective_alpha)
     final_score = history[-1] if history else 0.0
     rate = rolling_completion_rate(strengths, scheduled, window_days=window_days, ref_date=today)
     direction = trend(history)

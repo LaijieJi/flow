@@ -167,6 +167,16 @@ class EditHabitScreen(ModalScreen[Habit | None]):
                 id="edit-end-date-input",
             )
 
+            yield Label(
+                "alpha [dim](momentum smoothing, 0.01–1.0)[/dim]",
+                classes="field-label",
+            )
+            yield Input(
+                value=f"{h.alpha:g}",
+                placeholder=f"default {Habit.ALPHA_DEFAULT}",
+                id="edit-alpha-input",
+            )
+
             yield Static(
                 "[dim]tab[/dim] next field   "
                 "[dim]enter[/dim] save   "
@@ -281,6 +291,25 @@ class EditHabitScreen(ModalScreen[Habit | None]):
             self.query_one("#edit-end-date-input", Input).focus()
             return
 
+        alpha_str = self.query_one("#edit-alpha-input", Input).value.strip()
+        if alpha_str:
+            try:
+                alpha_value = float(alpha_str)
+            except ValueError:
+                self.notify("alpha must be a number", severity="warning", timeout=3)
+                self.query_one("#edit-alpha-input", Input).focus()
+                return
+            if not Habit.ALPHA_MIN <= alpha_value <= Habit.ALPHA_MAX:
+                self.notify(
+                    f"alpha must be in [{Habit.ALPHA_MIN}, {Habit.ALPHA_MAX}]",
+                    severity="warning",
+                    timeout=3,
+                )
+                self.query_one("#edit-alpha-input", Input).focus()
+                return
+        else:
+            alpha_value = Habit.ALPHA_DEFAULT
+
         with db.session(self.db_path) as conn:
             if name.lower() != self.habit.name.lower():
                 clash = db.find_habit_by_name(conn, name)
@@ -299,6 +328,7 @@ class EditHabitScreen(ModalScreen[Habit | None]):
             self.habit.description = description
             self.habit.start_date = start_date
             self.habit.end_date = end_date
+            self.habit.alpha = alpha_value
             db.update_habit(conn, self.habit)
 
         self.dismiss(self.habit)

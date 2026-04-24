@@ -59,6 +59,7 @@ class CheckScreen(Screen):
         Binding("r", "random", "Random", show=False),
         Binding("s", "nav_stats", "Stats", show=False),
         Binding("l", "nav_log", "Log", show=False),
+        Binding("R", "nav_review", "Review", show=False),
         Binding("escape", "back", "Back", show=False),
         Binding("t", "toggle_theme", "Theme", show=False),
         Binding("q", "quit", "Quit", show=False),
@@ -415,6 +416,9 @@ class CheckScreen(Screen):
 
     def action_nav_log(self) -> None:
         self.app.navigate_to("log")
+
+    def action_nav_review(self) -> None:
+        self.app.navigate_to("review")
 
     def action_back(self) -> None:
         if len(self.app.screen_stack) > 1:

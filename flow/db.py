@@ -8,9 +8,11 @@ blocks). Applying migrations is idempotent.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import date
+from importlib import resources
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -19,6 +21,8 @@ from .models import Habit, Completion, parse_frequency
 
 DEFAULT_DB_DIR = Path.home() / ".flow"
 DEFAULT_DB_PATH = DEFAULT_DB_DIR / "habits.db"
+
+_MIGRATION_NAME_RE = re.compile(r"^(\d+)_[\w\-]+\.sql$")
 
 
 def _adapt_date(d: date) -> str:
@@ -34,39 +38,43 @@ sqlite3.register_converter("date", _convert_date)
 sqlite3.register_converter("DATE", _convert_date)
 
 
-MIGRATIONS: list[str] = [
-    # v1: initial schema
+def _discover_migrations() -> list[tuple[int, str, str]]:
+    """Load migrations from the `flow.migrations` package.
+
+    Returns `(version, filename, sql)` triples sorted by version. Enforces:
+      - filenames match `NNN_description.sql`
+      - versions form a gap-free sequence starting at 1
+    Both rules catch the common "forgot to renumber" mistake early.
     """
-    CREATE TABLE habits (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        name        TEXT NOT NULL,
-        description TEXT,
-        frequency   TEXT NOT NULL,
-        unit        TEXT,
-        target      REAL,
-        created_at  DATE NOT NULL,
-        archived_at DATE
-    );
-    CREATE TABLE completions (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        habit_id  INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
-        date      DATE NOT NULL,
-        value     REAL,
-        note      TEXT,
-        UNIQUE(habit_id, date)
-    );
-    CREATE INDEX idx_completions_habit_date ON completions(habit_id, date);
-    """,
-    # v2: seasonal windows on habits
-    """
-    ALTER TABLE habits ADD COLUMN start_date DATE;
-    ALTER TABLE habits ADD COLUMN end_date   DATE;
-    """,
-    # v3: time tracking — duration (seconds) on completions
-    """
-    ALTER TABLE completions ADD COLUMN duration_seconds INTEGER;
-    """,
-]
+    out: list[tuple[int, str, str]] = []
+    for entry in resources.files("flow.migrations").iterdir():
+        name = entry.name
+        if not name.endswith(".sql"):
+            continue
+        match = _MIGRATION_NAME_RE.match(name)
+        if not match:
+            raise RuntimeError(
+                f"migration filename {name!r} does not match NNN_description.sql"
+            )
+        version = int(match.group(1))
+        sql = entry.read_text(encoding="utf-8")
+        out.append((version, name, sql))
+    out.sort(key=lambda t: t[0])
+
+    seen: set[int] = set()
+    for v, name, _ in out:
+        if v in seen:
+            raise RuntimeError(f"duplicate migration version {v} ({name})")
+        seen.add(v)
+    for expected, (v, name, _) in enumerate(out, start=1):
+        if v != expected:
+            raise RuntimeError(
+                f"migration gap: expected v{expected}, found v{v} ({name})"
+            )
+    return out
+
+
+MIGRATIONS: list[tuple[int, str, str]] = _discover_migrations()
 
 
 def _resolve_db_path(path: Path | str | None) -> Path:
@@ -115,11 +123,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     )
     row = conn.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
     current = row["v"] if row and row["v"] is not None else 0
-    for i, sql in enumerate(MIGRATIONS, start=1):
-        if i <= current:
+    for version, _name, sql in MIGRATIONS:
+        if version <= current:
             continue
         conn.executescript(sql)
-        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (i,))
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
     conn.commit()
 
 
@@ -130,6 +138,7 @@ def _row_to_habit(row: sqlite3.Row) -> Habit:
     keys = row.keys()
     start_date = row["start_date"] if "start_date" in keys else None
     end_date = row["end_date"] if "end_date" in keys else None
+    alpha = row["alpha"] if "alpha" in keys else Habit.ALPHA_DEFAULT
     return Habit(
         id=row["id"],
         name=row["name"],
@@ -141,6 +150,7 @@ def _row_to_habit(row: sqlite3.Row) -> Habit:
         archived_at=row["archived_at"],
         start_date=start_date,
         end_date=end_date,
+        alpha=alpha if alpha is not None else Habit.ALPHA_DEFAULT,
     )
 
 
@@ -168,11 +178,15 @@ def insert_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
         and habit.end_date < habit.start_date
     ):
         raise ValueError("end_date cannot be before start_date")
+    if not Habit.ALPHA_MIN <= habit.alpha <= Habit.ALPHA_MAX:
+        raise ValueError(
+            f"alpha must be in [{Habit.ALPHA_MIN}, {Habit.ALPHA_MAX}]"
+        )
     cur = conn.execute(
         "INSERT INTO habits ("
         "  name, description, frequency, unit, target, created_at, archived_at,"
-        "  start_date, end_date"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "  start_date, end_date, alpha"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             habit.name,
             habit.description,
@@ -183,6 +197,7 @@ def insert_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
             habit.archived_at,
             habit.start_date,
             habit.end_date,
+            habit.alpha,
         ),
     )
     habit.id = cur.lastrowid
@@ -232,9 +247,13 @@ def update_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
         and habit.end_date < habit.start_date
     ):
         raise ValueError("end_date cannot be before start_date")
+    if not Habit.ALPHA_MIN <= habit.alpha <= Habit.ALPHA_MAX:
+        raise ValueError(
+            f"alpha must be in [{Habit.ALPHA_MIN}, {Habit.ALPHA_MAX}]"
+        )
     cur = conn.execute(
         "UPDATE habits SET name = ?, description = ?, frequency = ?, unit = ?, "
-        "target = ?, start_date = ?, end_date = ? WHERE id = ?",
+        "target = ?, start_date = ?, end_date = ?, alpha = ? WHERE id = ?",
         (
             habit.name,
             habit.description,
@@ -243,6 +262,7 @@ def update_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
             habit.target,
             habit.start_date,
             habit.end_date,
+            habit.alpha,
             habit.id,
         ),
     )
@@ -332,7 +352,8 @@ def all_completions(
         "SELECT c.*, h.name AS h_name, h.description AS h_description, "
         "h.frequency AS h_frequency, h.unit AS h_unit, h.target AS h_target, "
         "h.created_at AS h_created_at, h.archived_at AS h_archived_at, "
-        "h.start_date AS h_start_date, h.end_date AS h_end_date "
+        "h.start_date AS h_start_date, h.end_date AS h_end_date, "
+        "h.alpha AS h_alpha "
         "FROM completions c JOIN habits h ON h.id = c.habit_id"
     )
     clauses: list[str] = []
@@ -371,6 +392,7 @@ def all_completions(
             archived_at=r["h_archived_at"],
             start_date=r["h_start_date"],
             end_date=r["h_end_date"],
+            alpha=r["h_alpha"] if r["h_alpha"] is not None else Habit.ALPHA_DEFAULT,
         )
         out.append((completion, habit))
     return out
@@ -385,7 +407,8 @@ def most_recent_completion(
         "SELECT c.*, h.name AS h_name, h.description AS h_description, "
         "h.frequency AS h_frequency, h.unit AS h_unit, h.target AS h_target, "
         "h.created_at AS h_created_at, h.archived_at AS h_archived_at, "
-        "h.start_date AS h_start_date, h.end_date AS h_end_date "
+        "h.start_date AS h_start_date, h.end_date AS h_end_date, "
+        "h.alpha AS h_alpha "
         "FROM completions c JOIN habits h ON h.id = c.habit_id"
     )
     params: list = []
@@ -415,6 +438,7 @@ def most_recent_completion(
         archived_at=row["h_archived_at"],
         start_date=row["h_start_date"],
         end_date=row["h_end_date"],
+        alpha=row["h_alpha"] if row["h_alpha"] is not None else Habit.ALPHA_DEFAULT,
     )
     return completion, habit
 

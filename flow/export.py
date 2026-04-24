@@ -88,6 +88,7 @@ def write_json(
                 "frequency": h.frequency,
                 "unit": h.unit,
                 "target": h.target,
+                "alpha": h.alpha,
                 "created_at": h.created_at.isoformat(),
                 "archived_at": h.archived_at.isoformat() if h.archived_at else None,
                 "completions": [

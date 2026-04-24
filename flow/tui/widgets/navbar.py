@@ -17,6 +17,7 @@ NAV_TABS: list[tuple[str, str, str]] = [
     ("check", "c", "check"),
     ("stats", "s", "stats"),
     ("log", "l", "log"),
+    ("review", "R", "review"),
 ]
 
 

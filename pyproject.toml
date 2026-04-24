@@ -51,6 +51,9 @@ Changelog = "https://github.com/LaijieJi/flow/blob/main/CHANGELOG.md"
 include = ["flow*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+"flow.migrations" = ["*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

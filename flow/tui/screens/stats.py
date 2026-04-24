@@ -25,6 +25,7 @@ class StatsScreen(Screen):
         Binding("enter", "drill_down", "Details"),
         Binding("c", "nav_check", "Check", show=False),
         Binding("l", "nav_log", "Log", show=False),
+        Binding("R", "nav_review", "Review", show=False),
         Binding("E", "open_export", "Export"),
         Binding("A", "toggle_archived", "Toggle archived"),
         Binding("t", "toggle_theme", "Theme"),
@@ -179,6 +180,9 @@ class StatsScreen(Screen):
 
     def action_nav_log(self) -> None:
         self.app.navigate_to("log")
+
+    def action_nav_review(self) -> None:
+        self.app.navigate_to("review")
 
     def action_back(self) -> None:
         if len(self.app.screen_stack) > 1:

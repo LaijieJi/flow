@@ -19,6 +19,9 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("flow random", "pick a scheduled-but-undone habit"),
             ("flow today", "one-line summary for shell prompts"),
             ("flow export", "CSV/JSON dump"),
+            ("flow week / flow month", "condensed digest for current period"),
+            ("flow summary --out week.md", "markdown digest for journaling"),
+            ("flow correlations", "'when A is done, B is also done' pairs"),
             ("flow check", "interactive daily check-in (TUI)"),
             ("flow stats [habit]", "momentum dashboard (TUI)"),
             ("flow pomo [habit]", "pomodoro timer; logs duration when a habit is given"),
@@ -31,6 +34,7 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("c", "jump to check screen"),
             ("s", "jump to stats screen"),
             ("l", "jump to completion log"),
+            ("R", "jump to review screen (week / month digest + correlations)"),
             ("t", "toggle light / dark theme"),
             ("h", "show this help"),
             ("escape", "back / close modal"),
@@ -95,8 +99,16 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     (
         "Detail screen — TUI",
         [
-            ("e", "edit habit"),
+            ("e", "edit habit (alpha too)"),
             ("x", "archive / restore"),
+            ("escape / q", "back"),
+        ],
+    ),
+    (
+        "Review screen — TUI",
+        [
+            ("w", "show week digest"),
+            ("m", "show month digest"),
             ("escape / q", "back"),
         ],
     ),

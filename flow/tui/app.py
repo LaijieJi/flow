@@ -103,12 +103,14 @@ class FlowApp(App):
         fresh instance on top, which keeps escape-back semantics intuitive."""
         from .screens.check import CheckScreen
         from .screens.log import LogScreen
+        from .screens.review import ReviewScreen
         from .screens.stats import StatsScreen
 
         cls_map = {
             "check": CheckScreen,
             "stats": StatsScreen,
             "log": LogScreen,
+            "review": ReviewScreen,
         }
         target_cls = cls_map.get(target)
         if target_cls is None:

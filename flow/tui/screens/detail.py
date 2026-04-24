@@ -15,6 +15,7 @@ from textual.widgets import Footer, Header, Label, Static
 from ... import db
 from ...models import Habit
 from ...momentum import compute_momentum
+from ...review import habit_score_sparkline
 from ..widgets.completion_grid import CompletionGrid
 from .edit_habit import EditHabitScreen
 
@@ -28,6 +29,7 @@ class DetailScreen(Screen):
         Binding("c", "nav_check", "Check", show=False),
         Binding("s", "nav_stats", "Stats", show=False),
         Binding("l", "nav_log", "Log", show=False),
+        Binding("R", "nav_review", "Review", show=False),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
     ]
@@ -38,6 +40,7 @@ class DetailScreen(Screen):
     }
     #detail-title,
     #detail-summary,
+    #detail-sparkline,
     #notes-title {
         margin: 1 2 0 2;
     }
@@ -72,6 +75,7 @@ class DetailScreen(Screen):
         yield Header(show_clock=False)
         yield Label("", id="detail-title")
         yield Label("", id="detail-summary")
+        yield Label("", id="detail-sparkline")
         yield CompletionGrid(id="detail-grid")
         yield Label("recent notes", id="notes-title")
         with VerticalScroll(id="notes-box"):
@@ -107,6 +111,19 @@ class DetailScreen(Screen):
             f"[dim]({mom.window_days}d)[/dim]"
         )
         self.query_one("#detail-summary", Label).update(self.summary_text)
+
+        spark, weekly = habit_score_sparkline(
+            self.habit, comps, weeks=12, today=self.today, width=30
+        )
+        if spark and len(weekly) >= 2:
+            spark_line = (
+                f"[dim]score 12w[/dim] [cyan]{spark}[/cyan]  "
+                f"[dim]{weekly[0]:.0f}→{weekly[-1]:.0f}[/dim]"
+            )
+        else:
+            spark_line = "[dim]score history: not enough data yet[/dim]"
+        self.query_one("#detail-sparkline", Label).update(spark_line)
+
         self.query_one(CompletionGrid).set_habit(self.habit, comps, today=self.today)
 
         notes = sorted(
@@ -143,6 +160,9 @@ class DetailScreen(Screen):
 
     def action_nav_log(self) -> None:
         self.app.navigate_to("log")
+
+    def action_nav_review(self) -> None:
+        self.app.navigate_to("review")
 
     def action_help(self) -> None:
         from .help import HelpScreen

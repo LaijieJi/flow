@@ -17,7 +17,7 @@ from dateutil import parser as dateparser
 from rich.console import Console
 from rich.table import Table
 
-from . import config as _config, db, export as _export, help_text
+from . import config as _config, db, export as _export, help_text, review as _review
 from .models import Completion, Habit, format_duration, parse_duration, parse_frequency
 from .momentum import compute_momentum
 
@@ -130,6 +130,12 @@ def _parse_optional_date(value: str | None, flag: str) -> date | None:
 @click.option(
     "--end-date", default=None, help="seasonal end (YYYY-MM-DD, optional)"
 )
+@click.option(
+    "--alpha",
+    type=float,
+    default=None,
+    help=f"momentum smoothing (0.01–1.0, default {Habit.ALPHA_DEFAULT})",
+)
 def add(
     name: str,
     frequency: str,
@@ -138,6 +144,7 @@ def add(
     description: str | None,
     start_date: str | None,
     end_date: str | None,
+    alpha: float | None,
 ) -> None:
     try:
         parse_frequency(frequency)
@@ -151,6 +158,11 @@ def add(
     if start is not None and end is not None and end < start:
         raise click.ClickException("--end-date cannot be before --start-date")
 
+    if alpha is not None and not Habit.ALPHA_MIN <= alpha <= Habit.ALPHA_MAX:
+        raise click.ClickException(
+            f"--alpha must be in [{Habit.ALPHA_MIN}, {Habit.ALPHA_MAX}]"
+        )
+
     with db.session() as conn:
         existing = [h for h in db.list_habits(conn, include_archived=True) if h.name.lower() == name.lower()]
         if existing:
@@ -163,6 +175,7 @@ def add(
             description=description,
             start_date=start,
             end_date=end,
+            alpha=alpha if alpha is not None else Habit.ALPHA_DEFAULT,
         )
         db.insert_habit(conn, habit)
 
@@ -307,6 +320,11 @@ def list_cmd(show_all: bool, window: int) -> None:
 @click.option(
     "--end-date", default=None, help="seasonal end (YYYY-MM-DD, empty clears)"
 )
+@click.option(
+    "--alpha",
+    default=None,
+    help=f"momentum smoothing (0.01–1.0, empty resets to {Habit.ALPHA_DEFAULT})",
+)
 def edit(
     habit: str,
     name: str | None,
@@ -316,13 +334,14 @@ def edit(
     description: str | None,
     start_date: str | None,
     end_date: str | None,
+    alpha: str | None,
 ) -> None:
     with db.session() as conn:
         h = _resolve_habit(conn, habit, include_archived=True)
 
         no_flags = all(
             v is None
-            for v in (name, frequency, unit, target, description, start_date, end_date)
+            for v in (name, frequency, unit, target, description, start_date, end_date, alpha)
         )
         if no_flags:
             initial = h.description or ""
@@ -362,6 +381,19 @@ def edit(
                 h.start_date = _parse_optional_date(start_date, "--start-date")
             if end_date is not None:
                 h.end_date = _parse_optional_date(end_date, "--end-date")
+            if alpha is not None:
+                if alpha == "":
+                    h.alpha = Habit.ALPHA_DEFAULT
+                else:
+                    try:
+                        a = float(alpha)
+                    except ValueError:
+                        raise click.ClickException(f"invalid --alpha {alpha!r}")
+                    if not Habit.ALPHA_MIN <= a <= Habit.ALPHA_MAX:
+                        raise click.ClickException(
+                            f"--alpha must be in [{Habit.ALPHA_MIN}, {Habit.ALPHA_MAX}]"
+                        )
+                    h.alpha = a
             if (
                 h.start_date is not None
                 and h.end_date is not None
@@ -702,6 +734,168 @@ def today(fmt: str) -> None:
     if len(remaining) > 3:
         preview += f", +{len(remaining) - 3} more"
     click.echo(f"flow: {done_count}/{total} — {preview}")
+
+
+def _render_digest(digest: _review.Digest, title: str) -> None:
+    header = (
+        f"[bold]{title}[/bold]  [dim]{digest.start.isoformat()} → "
+        f"{digest.end.isoformat()}[/dim]"
+    )
+    console.print(header)
+    if not digest.rows:
+        console.print("[dim]nothing scheduled in window[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("habit")
+    table.add_column("rate", justify="right")
+    table.add_column("done", justify="right")
+    table.add_column("sched", justify="right")
+    table.add_column("time", justify="right", style="dim")
+    table.add_column("notes", justify="right", style="dim")
+    for r in digest.rows:
+        time_str = format_duration(r.total_seconds) if r.total_seconds else ""
+        table.add_row(
+            r.habit.name,
+            f"{r.rate:.0%}",
+            f"{r.completed:g}",
+            str(r.scheduled),
+            time_str,
+            str(r.notes) if r.notes else "",
+        )
+    console.print(table)
+    console.print(
+        f"[dim]overall[/dim] {digest.total_completed:g} / {digest.total_scheduled} "
+        f"({digest.overall_rate:.0%})"
+    )
+
+
+def _load_digest_inputs(
+    conn, start: date, end: date
+) -> tuple[list[Habit], dict[int, list[Completion]]]:
+    habits = db.list_habits(conn, include_archived=False)
+    comps = {
+        h.id: db.completions_for_habit(conn, h.id, since=start, until=end)
+        for h in habits
+    }
+    return habits, comps
+
+
+@main.command(help="Condensed digest for the current ISO week (Mon–Sun).")
+def week() -> None:
+    today_ = date.today()
+    start, end = _review.week_bounds(today_)
+    with db.session() as conn:
+        habits, comps = _load_digest_inputs(conn, start, end)
+    digest = _review.build_digest(habits, comps, start, end)
+    _render_digest(digest, "this week")
+
+
+@main.command(help="Condensed digest for the current calendar month.")
+def month() -> None:
+    today_ = date.today()
+    start, end = _review.month_bounds(today_)
+    with db.session() as conn:
+        habits, comps = _load_digest_inputs(conn, start, end)
+    digest = _review.build_digest(habits, comps, start, end)
+    _render_digest(digest, "this month")
+
+
+@main.command(
+    help="Pairwise 'when A is done, B is also done' rates. Sorted by surprise.",
+)
+@click.option(
+    "--days", type=int, default=60, show_default=True, help="lookback window"
+)
+@click.option(
+    "--limit", type=int, default=15, show_default=True, help="max rows to show"
+)
+@click.option(
+    "--min-shared",
+    type=int,
+    default=5,
+    show_default=True,
+    help="min overlapping scheduled days required",
+)
+def correlations(days: int, limit: int, min_shared: int) -> None:
+    if days <= 0:
+        raise click.ClickException("--days must be positive")
+    today_ = date.today()
+    since = today_ - timedelta(days=days - 1)
+    with db.session() as conn:
+        habits = db.list_habits(conn, include_archived=False)
+        comps = {
+            h.id: db.completions_for_habit(conn, h.id, since=since, until=today_)
+            for h in habits
+        }
+    pairs = _review.correlations(habits, comps, since, today_, min_shared=min_shared)
+    if not pairs:
+        console.print("[dim]not enough shared data yet — try more days[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("when")
+    table.add_column("also", style="cyan")
+    table.add_column("co-rate", justify="right")
+    table.add_column("base", justify="right", style="dim")
+    table.add_column("lift", justify="right")
+    table.add_column("n", justify="right", style="dim")
+    for p in pairs[:limit]:
+        lift = p.co_rate - p.base_rate
+        lift_cell = f"{lift:+.0%}"
+        table.add_row(
+            p.a.name, p.b.name,
+            f"{p.co_rate:.0%}",
+            f"{p.base_rate:.0%}",
+            lift_cell,
+            str(p.shared_days),
+        )
+    console.print(table)
+
+
+@main.command(help="Markdown digest (defaults to the current week).")
+@click.option(
+    "--format",
+    "-F",
+    "fmt",
+    type=click.Choice(["markdown"]),
+    default="markdown",
+    show_default=True,
+)
+@click.option(
+    "--range",
+    "range_",
+    type=click.Choice(["week", "month"]),
+    default="week",
+    show_default=True,
+)
+@click.option(
+    "--out",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="write to file instead of stdout",
+)
+def summary(fmt: str, range_: str, output_path: str | None) -> None:
+    today_ = date.today()
+    if range_ == "week":
+        start, end = _review.week_bounds(today_)
+    else:
+        start, end = _review.month_bounds(today_)
+    with db.session() as conn:
+        habits = db.list_habits(conn, include_archived=False)
+        comps = {
+            h.id: db.completions_for_habit(conn, h.id, since=start, until=end)
+            for h in habits
+        }
+    text = _review.summary_markdown(habits, comps, start, end)
+    if output_path is None:
+        click.echo(text, nl=False)
+    else:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        console.print(f"[green]wrote[/green] {output_path}")
 
 
 if __name__ == "__main__":
