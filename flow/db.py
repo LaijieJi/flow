@@ -236,6 +236,24 @@ def restore_habit(conn: sqlite3.Connection, habit_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def delete_habit(conn: sqlite3.Connection, habit_id: int) -> bool:
+    """Hard-delete a habit and (via FK cascade) all its completions."""
+    cur = conn.execute("DELETE FROM habits WHERE id = ?", (habit_id,))
+    return cur.rowcount > 0
+
+
+def archived_habits_older_than(
+    conn: sqlite3.Connection, cutoff: date
+) -> list[Habit]:
+    """Habits with archived_at <= cutoff. Sorted by archived_at ascending."""
+    rows = conn.execute(
+        "SELECT * FROM habits WHERE archived_at IS NOT NULL AND archived_at <= ? "
+        "ORDER BY archived_at ASC, id ASC",
+        (cutoff,),
+    ).fetchall()
+    return [_row_to_habit(r) for r in rows]
+
+
 def update_habit(conn: sqlite3.Connection, habit: Habit) -> Habit:
     """Persist edits to an existing habit. Validates frequency. Requires `habit.id`."""
     if habit.id is None:
@@ -441,6 +459,40 @@ def most_recent_completion(
         alpha=row["h_alpha"] if row["h_alpha"] is not None else Habit.ALPHA_DEFAULT,
     )
     return completion, habit
+
+
+def get_completion(
+    conn: sqlite3.Connection, habit_id: int, on: date
+) -> Completion | None:
+    row = conn.execute(
+        "SELECT * FROM completions WHERE habit_id = ? AND date = ?",
+        (habit_id, on),
+    ).fetchone()
+    return _row_to_completion(row) if row else None
+
+
+def insert_completion(
+    conn: sqlite3.Connection, completion: Completion
+) -> Completion:
+    """Strict insert (no upsert). Raises sqlite3.IntegrityError on conflict."""
+    cur = conn.execute(
+        "INSERT INTO completions (habit_id, date, value, note, duration_seconds) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            completion.habit_id,
+            completion.date,
+            completion.value,
+            completion.note,
+            completion.duration_seconds,
+        ),
+    )
+    completion.id = cur.lastrowid
+    return completion
+
+
+def delete_completions_for_habit(conn: sqlite3.Connection, habit_id: int) -> int:
+    cur = conn.execute("DELETE FROM completions WHERE habit_id = ?", (habit_id,))
+    return cur.rowcount
 
 
 def completions_on(conn: sqlite3.Connection, on: date) -> list[Completion]:

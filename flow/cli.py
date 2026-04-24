@@ -17,7 +17,15 @@ from dateutil import parser as dateparser
 from rich.console import Console
 from rich.table import Table
 
-from . import config as _config, db, export as _export, help_text, review as _review
+from . import (
+    backup as _backup,
+    config as _config,
+    db,
+    export as _export,
+    help_text,
+    importer as _importer,
+    review as _review,
+)
 from .models import Completion, Habit, format_duration, parse_duration, parse_frequency
 from .momentum import compute_momentum
 
@@ -579,6 +587,96 @@ def export(
     finally:
         if opened_file is not None:
             opened_file.close()
+
+
+@main.command("import", help="Import habits + completions from a JSON file.")
+@click.argument("source", type=click.Path(dir_okay=False, exists=True, readable=True))
+@click.option(
+    "--conflict",
+    type=click.Choice(list(_importer.CONFLICT_MODES)),
+    default="skip",
+    show_default=True,
+    help="how to handle name collisions with existing habits",
+)
+def import_cmd(source: str, conflict: str) -> None:
+    with open(source, "r", encoding="utf-8") as f:
+        try:
+            payload = _importer.read_json(f)
+        except _importer.FlowImportError as e:
+            raise click.ClickException(str(e))
+    with db.session() as conn:
+        try:
+            stats = _importer.import_payload(conn, payload, conflict=conflict)
+        except _importer.FlowImportError as e:
+            raise click.ClickException(str(e))
+    parts = [
+        f"+{stats.habits_added} habits",
+        f"~{stats.habits_overwritten} overwritten",
+        f"~{stats.habits_merged} merged",
+        f"·{stats.habits_skipped} skipped",
+        f"+{stats.completions_added} completions",
+        f"·{stats.completions_skipped} completions skipped",
+    ]
+    console.print(f"[green]imported[/green] " + " · ".join(parts))
+
+
+@main.command(help="Snapshot the database to a dated file (cron-friendly).")
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help="explicit destination path (defaults to ~/.flow/backups/habits-DATE.db)",
+)
+def backup(output_path: str | None) -> None:
+    try:
+        dest = _backup.snapshot(dest_path=output_path)
+    except FileExistsError as e:
+        raise click.ClickException(str(e))
+    except FileNotFoundError as e:
+        raise click.ClickException(str(e))
+    size_kb = dest.stat().st_size / 1024
+    console.print(f"[green]backup[/green] {dest} [dim]({size_kb:.1f} KB)[/dim]")
+
+
+@main.command(help="Hard-delete habits archived more than --days days ago.")
+@click.option(
+    "--days",
+    type=int,
+    default=90,
+    show_default=True,
+    help="minimum archived age before a habit is eligible for deletion",
+)
+@click.option("--dry-run", is_flag=True, help="list what would be deleted, change nothing")
+@click.option("--yes", is_flag=True, help="skip the confirmation prompt")
+def prune(days: int, dry_run: bool, yes: bool) -> None:
+    if days < 0:
+        raise click.ClickException("--days must be >= 0")
+    cutoff = date.today() - timedelta(days=days)
+    with db.session() as conn:
+        candidates = db.archived_habits_older_than(conn, cutoff)
+        if not candidates:
+            console.print(
+                f"[dim]nothing to prune (no habits archived on or before {cutoff.isoformat()})[/dim]"
+            )
+            return
+        for h in candidates:
+            console.print(
+                f"  [red]-[/red] {h.name} [dim](archived {h.archived_at.isoformat()})[/dim]"
+            )
+        if dry_run:
+            console.print(f"[dim]dry run — {len(candidates)} habit(s) would be deleted[/dim]")
+            return
+        if not yes and not click.confirm(
+            f"Hard-delete {len(candidates)} habit(s) and all their completions?",
+            default=False,
+        ):
+            console.print("[dim]aborted[/dim]")
+            return
+        for h in candidates:
+            db.delete_habit(conn, h.id)
+    console.print(f"[red]pruned[/red] {len(candidates)} habit(s)")
 
 
 @main.command(help="Archive a habit (soft delete, data preserved).")
