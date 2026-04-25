@@ -62,15 +62,18 @@ class StatsScreen(Screen):
         db_path: Path | None = None,
         today: date | None = None,
         focus_habit: str | None = None,
+        watch_interval: int | None = None,
     ) -> None:
         super().__init__()
         self.db_path = db_path
         self.today = today or date.today()
         self.focus_habit = focus_habit
+        self.watch_interval = watch_interval
         self.include_archived = False
         self.habits: list[Habit] = []
         self._completions: dict[int, list[Completion]] = {}
         self._momentums: dict[int, Momentum] = {}
+        self._watch_timer = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -86,8 +89,13 @@ class StatsScreen(Screen):
         table = self.query_one(DataTable)
         table.add_columns("habit", "score", "trend", "rate")
         self._load()
+        if self.watch_interval is not None:
+            self._watch_timer = self.set_interval(self.watch_interval, self._load)
 
     def _load(self) -> None:
+        table = self.query_one(DataTable)
+        prior_cursor = table.cursor_row if table.row_count else None
+
         with db.session(self.db_path) as conn:
             self.habits = db.list_habits(conn, include_archived=self.include_archived)
             self._completions = {
@@ -97,9 +105,10 @@ class StatsScreen(Screen):
         title = "stats — last 30 days"
         if self.include_archived:
             title += " [dim](incl. archived)[/dim]"
+        if self.watch_interval is not None:
+            title += f" [dim]· watching ({self.watch_interval}s)[/dim]"
         self.query_one("#stats-title", Label).update(title)
 
-        table = self.query_one(DataTable)
         table.clear()
         self._momentums.clear()
 
@@ -121,7 +130,9 @@ class StatsScreen(Screen):
             return
 
         target_idx = 0
-        if self.focus_habit:
+        if prior_cursor is not None and 0 <= prior_cursor < len(self.habits):
+            target_idx = prior_cursor
+        elif self.focus_habit:
             needle = self.focus_habit.lower()
             for i, h in enumerate(self.habits):
                 if h.name.lower() == needle:

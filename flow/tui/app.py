@@ -29,6 +29,7 @@ class FlowApp(App):
         pomo_work_seconds: int | None = None,
         pomo_break_seconds: int | None = None,
         pomo_cycles: int | None = None,
+        watch_interval: int | None = None,
     ) -> None:
         super().__init__()
         self.db_path = db_path
@@ -40,6 +41,7 @@ class FlowApp(App):
         self.pomo_work_seconds = pomo_work_seconds
         self.pomo_break_seconds = pomo_break_seconds
         self.pomo_cycles = pomo_cycles
+        self.watch_interval = watch_interval
 
     def on_mount(self) -> None:
         self._apply_theme_from_config()
@@ -52,7 +54,10 @@ class FlowApp(App):
 
             self.push_screen(
                 StatsScreen(
-                    self.db_path, today=self.today, focus_habit=self.focus_habit
+                    self.db_path,
+                    today=self.today,
+                    focus_habit=self.focus_habit,
+                    watch_interval=self.watch_interval,
                 )
             )
         elif self.initial == "detail":
@@ -61,7 +66,12 @@ class FlowApp(App):
             if self.detail_habit is None:
                 raise ValueError("detail initial requires detail_habit")
             self.push_screen(
-                DetailScreen(self.db_path, self.detail_habit, today=self.today)
+                DetailScreen(
+                    self.db_path,
+                    self.detail_habit,
+                    today=self.today,
+                    watch_interval=self.watch_interval,
+                )
             )
         elif self.initial == "pomo":
             from .. import pomodoro as _pomo

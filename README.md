@@ -164,6 +164,46 @@ flow export --format json --all              # include archived
 flow export --habit read -F json             # filter to one habit
 ```
 
+### Data lifecycle
+
+```bash
+flow backup                                  # ~/.flow/backups/habits-YYYY-MM-DD.db
+flow backup -o /mnt/usb/flow.db              # custom destination
+
+flow export -F json -o snapshot.json         # round-trippable JSON
+flow import snapshot.json                    # default: skip name collisions
+flow import snapshot.json --conflict merge   # add only missing completions
+flow import snapshot.json --conflict overwrite  # replace metadata + completions
+
+flow prune --days 90 --dry-run               # see what would be hard-deleted
+flow prune --days 90                         # delete habits archived ≥ 90 days ago
+```
+
+`flow backup` uses SQLite's online backup API, so snapshots are consistent
+even if another flow process is mid-write. It refuses to overwrite an
+existing file — same-day re-runs need `-o` or a manual delete.
+
+### Sync via git
+
+`~/.flow/` is just files, so it works fine in a git repo:
+
+```bash
+cd ~/.flow
+git init
+printf '%s\n' '*.db-journal' '*.db-wal' '*.db-shm' > .gitignore
+git add habits.db config.json .gitignore
+git commit -m "initial"
+```
+
+For safer commits, snapshot first and commit the dated copy instead of the
+live DB:
+
+```bash
+flow backup && cd ~/.flow && git add backups/ && git commit -m "snapshot $(date +%F)"
+```
+
+Pair with cron (`0 22 * * * flow backup`) for a daily checkpoint.
+
 ### Configuration
 
 ```bash

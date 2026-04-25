@@ -16,11 +16,13 @@ DEFAULT_CONFIG_PATH = Path.home() / ".flow" / "config.json"
 
 DEFAULTS: dict[str, Any] = {
     "theme": "dark",  # "dark" | "light"
+    "notifications": "true",  # desktop notifications on phase ends + reminders
 }
 
 KNOWN_KEYS = set(DEFAULTS.keys())
 
 VALID_THEMES = {"dark", "light"}
+VALID_BOOLS = {"true", "false"}
 
 
 def _resolve_path(path: Path | str | None) -> Path:
@@ -68,6 +70,11 @@ def set_value(key: str, value: str, path: Path | str | None = None) -> Any:
         if value not in VALID_THEMES:
             raise ValueError(
                 f"invalid theme {value!r} (expected one of: {sorted(VALID_THEMES)})"
+            )
+    elif key == "notifications":
+        if value not in VALID_BOOLS:
+            raise ValueError(
+                f"invalid notifications {value!r} (expected one of: {sorted(VALID_BOOLS)})"
             )
     cfg = load(path)
     cfg[key] = value

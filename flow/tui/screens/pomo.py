@@ -17,7 +17,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, Static
 
-from ... import db, pomodoro
+from ... import config as _config, db, notify, pomodoro
 from ...models import Completion, Habit
 from .. import sound
 
@@ -156,14 +156,19 @@ class PomodoroScreen(Screen):
         if self.phase == "work":
             if self.habit is not None:
                 self._log_work_session(self.work_seconds)
-            self._ring("phase")
             if self.break_seconds > 0:
+                self._ring("phase", "Work done — break time")
                 self.phase = "break"
                 self.remaining = self.break_seconds
             else:
+                # Suppress the phase notification when the very next call
+                # will fire the final 'done' notification (last cycle).
+                if self.cycle < self.total_cycles:
+                    self._ring("phase", "Work done")
                 self._start_next_cycle_or_finish()
         elif self.phase == "break":
-            self._ring("phase")
+            if self.cycle < self.total_cycles:
+                self._ring("phase", "Break over — back to work")
             self._start_next_cycle_or_finish()
 
     def _start_next_cycle_or_finish(self) -> None:
@@ -172,16 +177,27 @@ class PomodoroScreen(Screen):
             self.remaining = 0
             if self._timer is not None:
                 self._timer.pause()
-            self._ring("done")
+            done_msg = (
+                f"Pomodoro complete — {self.habit.name}"
+                if self.habit is not None
+                else "Pomodoro complete"
+            )
+            self._ring("done", done_msg)
             return
         self.cycle += 1
         self.phase = "work"
         self.remaining = self.work_seconds
 
-    def _ring(self, kind: str) -> None:
-        """Audible cue — system sound if available, terminal bell as fallback."""
+    def _ring(self, kind: str, message: str = "") -> None:
+        """Audible + visual cue. System sound, terminal bell, and (when the
+        notifications config flag is on) a desktop notification."""
         sound.play(kind)
         self.app.bell()
+        if message and _config.get("notifications") == "true":
+            title = "flow pomo"
+            if self.habit is not None and kind != "done":
+                title = f"flow pomo — {self.habit.name}"
+            notify.send(title, message)
 
     # -- logging --------------------------------------------------------------
 

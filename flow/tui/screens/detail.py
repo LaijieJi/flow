@@ -63,13 +63,16 @@ class DetailScreen(Screen):
         db_path: Path | None,
         habit: Habit,
         today: date | None = None,
+        watch_interval: int | None = None,
     ) -> None:
         super().__init__()
         self.db_path = db_path
         self.habit = habit
         self.today = today or date.today()
+        self.watch_interval = watch_interval
         self.summary_text: str = ""
         self.notes_text: str = ""
+        self._watch_timer = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -84,6 +87,8 @@ class DetailScreen(Screen):
 
     def on_mount(self) -> None:
         self._refresh()
+        if self.watch_interval is not None:
+            self._watch_timer = self.set_interval(self.watch_interval, self._refresh)
 
     def _refresh(self) -> None:
         self.title = f"flow — {self.habit.name}"

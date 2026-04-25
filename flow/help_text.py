@@ -26,9 +26,11 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("flow summary --out week.md", "markdown digest for journaling"),
             ("flow correlations", "'when A is done, B is also done' pairs"),
             ("flow check", "interactive daily check-in (TUI)"),
-            ("flow stats [habit]", "momentum dashboard (TUI)"),
+            ("flow stats [habit] [--watch N]", "momentum dashboard; --watch auto-refreshes every N seconds"),
             ("flow pomo [habit]", "pomodoro timer; logs duration when a habit is given"),
-            ("flow config", "read/write persistent preferences"),
+            ("flow remind", "fire a desktop notification with today's summary (cron target)"),
+            ("flow install-cron HH:MM", "install/remove a daily-reminder crontab entry"),
+            ("flow config", "read/write persistent preferences (theme, notifications)"),
         ],
     ),
     (

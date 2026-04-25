@@ -20,10 +20,12 @@ from rich.table import Table
 from . import (
     backup as _backup,
     config as _config,
+    cron as _cron,
     db,
     export as _export,
     help_text,
     importer as _importer,
+    notify as _notify,
     review as _review,
 )
 from .models import Completion, Habit, format_duration, parse_duration, parse_frequency
@@ -469,16 +471,29 @@ def check() -> None:
 
 @main.command(help="Momentum dashboard (TUI). Pass a habit to drill in.")
 @click.argument("habit", required=False)
-def stats(habit: str | None) -> None:
+@click.option(
+    "--watch",
+    "watch_interval",
+    type=int,
+    default=None,
+    metavar="SECONDS",
+    help="auto-refresh the dashboard every N seconds",
+)
+def stats(habit: str | None, watch_interval: int | None) -> None:
     from .tui.app import FlowApp
 
+    if watch_interval is not None and watch_interval < 1:
+        raise click.ClickException("--watch must be >= 1")
+
     if habit is None:
-        FlowApp(initial="stats").run()
+        FlowApp(initial="stats", watch_interval=watch_interval).run()
         return
 
     with db.session() as conn:
         h = _resolve_habit(conn, habit, include_archived=True)
-    FlowApp(initial="detail", detail_habit=h).run()
+    FlowApp(
+        initial="detail", detail_habit=h, watch_interval=watch_interval
+    ).run()
 
 
 @main.command(
@@ -807,6 +822,24 @@ def completion(shell: str) -> None:
     help="'text' = human summary, 'count' = 'done/total' only",
 )
 def today(fmt: str) -> None:
+    message, done_count, total = _today_summary()
+    if fmt == "count":
+        click.echo(f"{done_count}/{total}")
+        return
+    if total == 0:
+        click.echo("flow: nothing scheduled today")
+        return
+    if done_count == total:
+        click.echo(f"flow: {done_count}/{total} ✓ all done")
+        return
+    # Trim the leading "N/M done — " from the shared message; `today` formats
+    # its own prefix for shell-prompt compatibility.
+    suffix = message.split(" — ", 1)[1] if " — " in message else message
+    click.echo(f"flow: {done_count}/{total} — {suffix}")
+
+
+def _today_summary() -> tuple[str, int, int]:
+    """Body shared by `today` and `remind`. Returns (message, done, total)."""
     today_ = date.today()
     with db.session() as conn:
         habits = db.list_habits(conn)
@@ -816,22 +849,70 @@ def today(fmt: str) -> None:
     total = len(scheduled)
     done_count = sum(1 for h in scheduled if h.id in done_ids)
 
-    if fmt == "count":
-        click.echo(f"{done_count}/{total}")
-        return
-
     if total == 0:
-        click.echo("flow: nothing scheduled today")
-        return
-
+        return ("nothing scheduled today", done_count, total)
     remaining = [h.name for h in scheduled if h.id not in done_ids]
     if not remaining:
-        click.echo(f"flow: {done_count}/{total} ✓ all done")
-        return
+        return (f"all {total} done — nice work", done_count, total)
     preview = ", ".join(remaining[:3])
     if len(remaining) > 3:
         preview += f", +{len(remaining) - 3} more"
-    click.echo(f"flow: {done_count}/{total} — {preview}")
+    return (f"{done_count}/{total} done — {preview}", done_count, total)
+
+
+@main.command(help="Fire a desktop notification with today's summary (cron target).")
+@click.option("--quiet", is_flag=True, help="suppress stdout (cron-friendly)")
+def remind(quiet: bool) -> None:
+    message, _done, _total = _today_summary()
+    _notify.send("flow", message)
+    if not quiet:
+        click.echo(message)
+
+
+@main.command(
+    "install-cron",
+    help="Install (or remove) a daily reminder cron entry. Time is HH:MM 24h.",
+)
+@click.argument("time_spec", required=False)
+@click.option("--remove", "do_remove", is_flag=True, help="remove the existing entry")
+@click.option("--dry-run", is_flag=True, help="print what would change")
+def install_cron(time_spec: str | None, do_remove: bool, dry_run: bool) -> None:
+    if do_remove:
+        if time_spec is not None:
+            raise click.ClickException("--remove takes no time argument")
+        if dry_run:
+            click.echo(f"would strip lines containing {_cron.MARKER!r}")
+            return
+        try:
+            removed = _cron.remove()
+        except RuntimeError as e:
+            raise click.ClickException(str(e))
+        if removed:
+            console.print("[yellow]removed[/yellow] flow-reminder cron entry")
+        else:
+            console.print("[dim]no flow-reminder cron entry found[/dim]")
+        return
+
+    if time_spec is None:
+        raise click.ClickException("missing time argument (e.g. `flow install-cron 22:00`)")
+    try:
+        schedule = _cron.parse_time(time_spec)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    entry = _cron.build_entry(schedule)
+    if dry_run:
+        click.echo(entry)
+        return
+
+    try:
+        _cron.install(schedule)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
+    console.print(
+        f"[green]installed[/green] daily reminder at {schedule.hhmm} "
+        f"[dim]({entry})[/dim]"
+    )
 
 
 def _render_digest(digest: _review.Digest, title: str) -> None:
