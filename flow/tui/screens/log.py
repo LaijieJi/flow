@@ -80,7 +80,9 @@ class LogScreen(Screen):
             table.add_row("—", "no completions in window", "", "", "")
             return
         for c, h in pairs:
-            if c.value is not None:
+            if c.is_skipped:
+                val = "⊘ skip"
+            elif c.value is not None:
                 val = f"{c.value:g}"
                 if h.unit:
                     val += f" {h.unit}"

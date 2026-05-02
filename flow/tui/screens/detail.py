@@ -98,15 +98,22 @@ class DetailScreen(Screen):
             if fresh is not None:
                 self.habit = fresh
             comps = db.completions_for_habit(conn, self.habit.id)
+            paused_until = db.paused_until_date(conn, self.habit.id, self.today)
 
         archived_tag = (
             f"  [red](archived {self.habit.archived_at.isoformat()})[/red]"
             if self.habit.is_archived
             else ""
         )
+        paused_tag = (
+            f"  [yellow](paused → {paused_until.isoformat()})[/yellow]"
+            if paused_until is not None
+            else ""
+        )
         self.query_one("#detail-title", Label).update(
             f"[bold]{self.habit.name}[/bold]  [dim]— {self.habit.frequency}[/dim]"
             + archived_tag
+            + paused_tag
         )
 
         mom = compute_momentum(self.habit, comps, today=self.today)

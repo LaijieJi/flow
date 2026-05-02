@@ -157,6 +157,7 @@ def _row_to_habit(row: sqlite3.Row) -> Habit:
 def _row_to_completion(row: sqlite3.Row) -> Completion:
     keys = row.keys()
     duration = row["duration_seconds"] if "duration_seconds" in keys else None
+    status = row["status"] if "status" in keys else "done"
     return Completion(
         id=row["id"],
         habit_id=row["habit_id"],
@@ -164,6 +165,7 @@ def _row_to_completion(row: sqlite3.Row) -> Completion:
         value=row["value"],
         note=row["note"],
         duration_seconds=duration,
+        status=status or "done",
     )
 
 
@@ -308,17 +310,19 @@ def upsert_completion(conn: sqlite3.Connection, completion: Completion) -> Compl
     """Insert or replace today's completion for a habit (enforced unique on
     (habit_id, date)). Returns the stored row."""
     cur = conn.execute(
-        "INSERT INTO completions (habit_id, date, value, note, duration_seconds) "
-        "VALUES (?, ?, ?, ?, ?) "
+        "INSERT INTO completions (habit_id, date, value, note, duration_seconds, status) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(habit_id, date) DO UPDATE SET "
         "value = excluded.value, note = excluded.note, "
-        "duration_seconds = excluded.duration_seconds",
+        "duration_seconds = excluded.duration_seconds, "
+        "status = excluded.status",
         (
             completion.habit_id,
             completion.date,
             completion.value,
             completion.note,
             completion.duration_seconds,
+            completion.status,
         ),
     )
     if cur.lastrowid:
@@ -398,6 +402,7 @@ def all_completions(
             value=r["value"],
             note=r["note"],
             duration_seconds=r["duration_seconds"],
+            status=(r["status"] if "status" in r.keys() else "done") or "done",
         )
         habit = Habit(
             id=r["habit_id"],
@@ -444,6 +449,7 @@ def most_recent_completion(
         value=row["value"],
         note=row["note"],
         duration_seconds=row["duration_seconds"],
+        status=(row["status"] if "status" in row.keys() else "done") or "done",
     )
     habit = Habit(
         id=row["habit_id"],
@@ -476,14 +482,15 @@ def insert_completion(
 ) -> Completion:
     """Strict insert (no upsert). Raises sqlite3.IntegrityError on conflict."""
     cur = conn.execute(
-        "INSERT INTO completions (habit_id, date, value, note, duration_seconds) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO completions (habit_id, date, value, note, duration_seconds, status) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (
             completion.habit_id,
             completion.date,
             completion.value,
             completion.note,
             completion.duration_seconds,
+            completion.status,
         ),
     )
     completion.id = cur.lastrowid
@@ -506,13 +513,70 @@ def bulk_insert_completions(
     conn: sqlite3.Connection, completions: Iterable[Completion]
 ) -> None:
     conn.executemany(
-        "INSERT INTO completions (habit_id, date, value, note, duration_seconds) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO completions (habit_id, date, value, note, duration_seconds, status) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         [
-            (c.habit_id, c.date, c.value, c.note, c.duration_seconds)
+            (c.habit_id, c.date, c.value, c.note, c.duration_seconds, c.status)
             for c in completions
         ],
     )
+
+
+# ---- skip / pause helpers ------------------------------------------------------
+
+
+def bulk_skip_dates(
+    conn: sqlite3.Connection,
+    habit_id: int,
+    dates: Iterable[date],
+    note: str | None = None,
+) -> int:
+    """Insert skip completions for the given dates. Existing rows on those
+    dates are left untouched (INSERT OR IGNORE) so an explicit done is never
+    overwritten by a bulk pause. Returns the number of rows actually inserted.
+    """
+    inserted = 0
+    for d in dates:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO completions "
+            "(habit_id, date, value, note, duration_seconds, status) "
+            "VALUES (?, ?, NULL, ?, NULL, 'skipped')",
+            (habit_id, d, note),
+        )
+        inserted += cur.rowcount
+    return inserted
+
+
+def clear_future_skips(
+    conn: sqlite3.Connection, habit_id: int, since: date
+) -> int:
+    """Delete skip completions on or after `since` for the given habit. Used
+    by `flow resume` to lift a pause early. Returns rows removed."""
+    cur = conn.execute(
+        "DELETE FROM completions "
+        "WHERE habit_id = ? AND date >= ? AND status = 'skipped'",
+        (habit_id, since),
+    )
+    return cur.rowcount
+
+
+def paused_until_date(
+    conn: sqlite3.Connection, habit_id: int, today: date
+) -> date | None:
+    """If there's at least one future skip for `habit_id`, return the latest
+    such date (i.e. the day after which the habit resumes). None otherwise.
+    "Future" includes today — a skip today still means actively paused."""
+    row = conn.execute(
+        "SELECT MAX(date) AS d FROM completions "
+        "WHERE habit_id = ? AND status = 'skipped' AND date >= ?",
+        (habit_id, today),
+    ).fetchone()
+    if row is None or row["d"] is None:
+        return None
+    raw = row["d"]
+    if isinstance(raw, date):
+        return raw
+    return date.fromisoformat(raw)
 
 
 def current_schema_version(conn: sqlite3.Connection) -> int:

@@ -58,13 +58,18 @@ class Digest:
 def _digest_row(habit: Habit, completions: Iterable[Completion], start: date, end: date) -> DigestRow:
     comps = [c for c in completions if start <= c.date <= end]
     scheduled = scheduled_days_between(habit, max(habit.created_at, start), end)
-    done_by_date: dict[date, Completion] = {c.date: c for c in comps}
+    by_date: dict[date, Completion] = {c.date: c for c in comps}
+    # Skipped days are deliberate not-counted: drop them from the denominator
+    # so the digest rate matches the momentum score's view of the window.
+    scheduled = [d for d in scheduled if not (by_date.get(d) and by_date[d].is_skipped)]
     completed = 0.0
     for d in scheduled:
-        c = done_by_date.get(d)
-        if c is not None:
+        c = by_date.get(d)
+        if c is not None and not c.is_skipped:
             completed += completion_strength(c.value, habit.target)
-    total_seconds = sum((c.duration_seconds or 0) for c in comps)
+    total_seconds = sum(
+        (c.duration_seconds or 0) for c in comps if not c.is_skipped
+    )
     notes = sum(1 for c in comps if c.note)
     return DigestRow(
         habit=habit,
@@ -153,9 +158,15 @@ def habit_score_sparkline(
     today = today or date.today()
     start = today - timedelta(days=weeks * 7 - 1)
     start = max(start, habit.created_at)
+    comps_list = list(completions)
     scheduled = scheduled_days_between(habit, start, today)
+    skips = {c.date for c in comps_list if c.is_skipped}
+    if skips:
+        scheduled = [d for d in scheduled if d not in skips]
     strengths = {
-        c.date: completion_strength(c.value, habit.target) for c in completions
+        c.date: completion_strength(c.value, habit.target)
+        for c in comps_list
+        if not c.is_skipped
     }
     history = score_history(strengths, scheduled, alpha=habit.alpha)
     if not history:
@@ -204,15 +215,22 @@ def correlations(
     overlapping scheduled days."""
     active = [h for h in habits if not h.is_archived]
     done_sets: dict[int, set[date]] = {}
+    skip_sets: dict[int, set[date]] = {}
     for h in active:
+        comps = completions_by_habit.get(h.id, [])
         done_sets[h.id] = {
             c.date
-            for c in completions_by_habit.get(h.id, [])
+            for c in comps
             if since <= c.date <= today
+            and not c.is_skipped
             and completion_strength(c.value, h.target) > 0.0
+        }
+        skip_sets[h.id] = {
+            c.date for c in comps if since <= c.date <= today and c.is_skipped
         }
     sched_sets: dict[int, set[date]] = {
         h.id: set(scheduled_days_between(h, max(h.created_at, since), today))
+        - skip_sets[h.id]
         for h in active
     }
 

@@ -165,6 +165,11 @@ class Habit:
         return True
 
 
+COMPLETION_STATUS_DONE = "done"
+COMPLETION_STATUS_SKIPPED = "skipped"
+VALID_COMPLETION_STATUS = {COMPLETION_STATUS_DONE, COMPLETION_STATUS_SKIPPED}
+
+
 @dataclass(slots=True)
 class Completion:
     habit_id: int
@@ -173,12 +178,26 @@ class Completion:
     value: float | None = None
     note: str | None = None
     duration_seconds: int | None = None
+    status: str = COMPLETION_STATUS_DONE
 
     def __post_init__(self) -> None:
         if self.note is not None and len(self.note) > Habit.NOTE_MAX:
             raise ValueError(f"note exceeds {Habit.NOTE_MAX} chars")
         if self.duration_seconds is not None and self.duration_seconds < 0:
             raise ValueError("duration_seconds must be >= 0")
+        if self.status not in VALID_COMPLETION_STATUS:
+            raise ValueError(
+                f"invalid completion status {self.status!r} "
+                f"(expected one of {sorted(VALID_COMPLETION_STATUS)})"
+            )
+
+    @property
+    def is_skipped(self) -> bool:
+        return self.status == COMPLETION_STATUS_SKIPPED
+
+    @property
+    def is_done(self) -> bool:
+        return self.status == COMPLETION_STATUS_DONE
 
 
 _DURATION_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}

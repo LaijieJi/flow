@@ -27,8 +27,11 @@ class HabitRow(ListItem):
 
     def refresh_text(self) -> None:
         self.query_one("#row-label", Static).update(self._render_text())
-        done = self.completion is not None
-        self.set_class(done, "done")
+        c = self.completion
+        is_done_state = c is not None and not c.is_skipped
+        is_skipped_state = c is not None and c.is_skipped
+        self.set_class(is_done_state, "done")
+        self.set_class(is_skipped_state, "skipped")
 
     def _render_text(self) -> str:
         h = self.habit
@@ -38,9 +41,19 @@ class HabitRow(ListItem):
                 f"not scheduled[/dim italic]"
             )
         c = self.completion
-        mark = "[green]●[/green]" if c else "○"
+        if c is not None and c.is_skipped:
+            mark = "[yellow]⊘[/yellow]"
+        elif c is not None:
+            mark = "[green]●[/green]"
+        else:
+            mark = "○"
         parts: list[str] = [f"{mark}  {h.name}", f"  [dim]({h.frequency})[/dim]"]
-        if c is not None:
+        if c is not None and c.is_skipped:
+            parts.append("  [yellow]skipped[/yellow]")
+            if c.note:
+                note = c.note if len(c.note) <= 48 else c.note[:45] + "..."
+                parts.append(f"  [dim italic]— {note}[/dim italic]")
+        elif c is not None:
             if c.value is not None:
                 unit = f" {h.unit}" if h.unit else ""
                 if h.target:

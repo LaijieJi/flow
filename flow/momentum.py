@@ -53,7 +53,19 @@ def completion_strength(value: float | None, target: float | None) -> float:
 def strengths_by_date(
     completions: Iterable[Completion], target: float | None
 ) -> dict[date, float]:
-    return {c.date: completion_strength(c.value, target) for c in completions}
+    """Strength per date, only for `done` completions. Skipped days are
+    excluded — callers should also exclude those dates from `scheduled_days`
+    so a skip neither boosts nor decays the score."""
+    return {
+        c.date: completion_strength(c.value, target)
+        for c in completions
+        if not c.is_skipped
+    }
+
+
+def skipped_dates(completions: Iterable[Completion]) -> set[date]:
+    """Dates where the user marked the habit as deliberately skipped."""
+    return {c.date for c in completions if c.is_skipped}
 
 
 # ---- scheduling ---------------------------------------------------------------
@@ -170,8 +182,12 @@ def compute_momentum(
     defaults to the habit's configured smoothing factor."""
     today = today if today is not None else date.today()
     start = habit.created_at
+    comps = list(completions)
     scheduled = scheduled_days_between(habit, start, today)
-    strengths = strengths_by_date(completions, habit.target)
+    skips = skipped_dates(comps)
+    if skips:
+        scheduled = [d for d in scheduled if d not in skips]
+    strengths = strengths_by_date(comps, habit.target)
 
     effective_alpha = alpha if alpha is not None else habit.alpha
     history = score_history(strengths, scheduled, alpha=effective_alpha)

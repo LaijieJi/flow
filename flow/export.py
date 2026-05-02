@@ -47,6 +47,7 @@ def write_csv(
             "value",
             "duration_seconds",
             "note",
+            "status",
         ]
     )
     rows = 0
@@ -62,6 +63,7 @@ def write_csv(
                     "" if c.value is None else f"{c.value:g}",
                     "" if c.duration_seconds is None else str(c.duration_seconds),
                     c.note or "",
+                    c.status,
                 ]
             )
             rows += 1
@@ -97,6 +99,7 @@ def write_json(
                         "value": c.value,
                         "duration_seconds": c.duration_seconds,
                         "note": c.note,
+                        "status": c.status,
                     }
                     for c in db.completions_for_habit(conn, h.id)
                 ],

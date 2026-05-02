@@ -19,6 +19,7 @@ from ...momentum import completion_strength
 GLYPH_FULL = "▓"
 GLYPH_PARTIAL = "▒"
 GLYPH_MISS = "░"
+GLYPH_SKIP = "▪"
 GLYPH_UNSCHEDULED = "·"
 GLYPH_NONE = " "
 
@@ -44,24 +45,33 @@ class CompletionGrid(Static):
     ) -> None:
         today = today or date.today()
         start = today - timedelta(days=window - 1)
+        comps_list = list(completions)
         strengths = {
-            c.date: completion_strength(c.value, habit.target) for c in completions
+            c.date: completion_strength(c.value, habit.target)
+            for c in comps_list
+            if not c.is_skipped
         }
+        skips = {c.date for c in comps_list if c.is_skipped}
         blocks = [
-            render_block(habit, start + timedelta(days=i), strengths)
+            render_block(habit, start + timedelta(days=i), strengths, skips)
             for i in range(window)
         ]
         self.update("".join(blocks))
 
 
 def render_block(
-    habit: Habit, day: date, strengths: dict[date, float]
+    habit: Habit,
+    day: date,
+    strengths: dict[date, float],
+    skips: set[date] | None = None,
 ) -> str:
     """Return the markup fragment for a single day's block."""
     if day < habit.created_at:
         return GLYPH_NONE
     if not habit.is_scheduled_on(day):
         return f"[dim]{GLYPH_UNSCHEDULED}[/dim]"
+    if skips and day in skips:
+        return f"[yellow]{GLYPH_SKIP}[/yellow]"
     s = strengths.get(day, 0.0)
     if s >= 1.0:
         return GLYPH_FULL

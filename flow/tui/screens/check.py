@@ -18,7 +18,13 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from ... import db
-from ...models import Completion, Habit, parse_duration
+from ...models import (
+    COMPLETION_STATUS_DONE,
+    COMPLETION_STATUS_SKIPPED,
+    Completion,
+    Habit,
+    parse_duration,
+)
 from ..widgets.habit_row import HabitRow
 from ..widgets.navbar import NavBar
 from .add_habit import AddHabitScreen
@@ -53,6 +59,7 @@ class CheckScreen(Screen):
         # Hidden from the footer to keep it readable — all documented in `h`.
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
+        Binding("S", "toggle_skip", "Skip", show=False),
         Binding("P", "pomodoro_free", "Free pomo", show=False),
         Binding("n", "add_note", "Note", show=False),
         Binding("u", "undo", "Undo", show=False),
@@ -217,11 +224,39 @@ class CheckScreen(Screen):
         if row is None or not row.scheduled:
             return
         with db.session(self.db_path) as conn:
-            if row.completion is not None:
+            existing = row.completion
+            # Three-way: nothing → done → off; skipped → done (overwrite the
+            # skip, since space means "I did it after all").
+            if existing is not None and not existing.is_skipped:
                 db.delete_completion(conn, row.habit.id, self.today)
                 row.completion = None
             else:
-                c = Completion(habit_id=row.habit.id, date=self.today)
+                c = Completion(
+                    habit_id=row.habit.id,
+                    date=self.today,
+                    status=COMPLETION_STATUS_DONE,
+                )
+                db.upsert_completion(conn, c)
+                row.completion = c
+        row.refresh_text()
+
+    def action_toggle_skip(self) -> None:
+        row = self._current_row()
+        if row is None or not row.scheduled:
+            return
+        with db.session(self.db_path) as conn:
+            existing = row.completion
+            if existing is not None and existing.is_skipped:
+                db.delete_completion(conn, row.habit.id, self.today)
+                row.completion = None
+            else:
+                # Replace any prior 'done' with a skip — this is the user's
+                # explicit "actually, skipping today" override.
+                c = Completion(
+                    habit_id=row.habit.id,
+                    date=self.today,
+                    status=COMPLETION_STATUS_SKIPPED,
+                )
                 db.upsert_completion(conn, c)
                 row.completion = c
         row.refresh_text()
@@ -338,6 +373,7 @@ class CheckScreen(Screen):
             existing = row.completion
             value = existing.value if existing else None
             dur = existing.duration_seconds if existing else None
+            status = existing.status if existing else COMPLETION_STATUS_DONE
             note = text or None
             c = Completion(
                 habit_id=row.habit.id,
@@ -345,6 +381,7 @@ class CheckScreen(Screen):
                 value=value,
                 note=note,
                 duration_seconds=dur,
+                status=status,
             )
             db.upsert_completion(conn, c)
             row.completion = c

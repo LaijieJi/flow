@@ -23,7 +23,13 @@ from datetime import date
 from typing import Any, TextIO
 
 from . import db
-from .models import Completion, Habit, parse_frequency
+from .models import (
+    COMPLETION_STATUS_DONE,
+    VALID_COMPLETION_STATUS,
+    Completion,
+    Habit,
+    parse_frequency,
+)
 
 
 CONFLICT_MODES = ("skip", "overwrite", "merge")
@@ -128,12 +134,18 @@ def _completion_from_payload(
     note = raw.get("note")
     if note is not None and not isinstance(note, str):
         raise FlowImportError(f"{ctx}: note must be string or null")
+    status = raw.get("status", COMPLETION_STATUS_DONE)
+    if not isinstance(status, str) or status not in VALID_COMPLETION_STATUS:
+        raise FlowImportError(
+            f"{ctx}: status must be one of {sorted(VALID_COMPLETION_STATUS)}"
+        )
     return Completion(
         habit_id=habit_id,
         date=on,
         value=float(value) if value is not None else None,
         note=note,
         duration_seconds=duration,
+        status=status,
     )
 
 

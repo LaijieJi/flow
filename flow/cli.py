@@ -28,8 +28,20 @@ from . import (
     notify as _notify,
     review as _review,
 )
-from .models import Completion, Habit, format_duration, parse_duration, parse_frequency
-from .momentum import compute_momentum
+from .models import (
+    COMPLETION_STATUS_DONE,
+    COMPLETION_STATUS_SKIPPED,
+    Completion,
+    Habit,
+    format_duration,
+    parse_duration,
+    parse_frequency,
+)
+from .momentum import (
+    completion_strength,
+    compute_momentum,
+    scheduled_days_between,
+)
 
 
 console = Console()
@@ -299,12 +311,17 @@ def list_cmd(show_all: bool, window: int) -> None:
         if show_all:
             table.add_column("archived", style="red")
 
+        today_ = date.today()
         for h in habits:
             comps = db.completions_for_habit(conn, h.id)
             mom = compute_momentum(h, comps, window_days=window)
+            paused_until = db.paused_until_date(conn, h.id, today_)
+            name_cell = h.name
+            if paused_until is not None:
+                name_cell += f" [yellow](paused → {paused_until.isoformat()})[/yellow]"
             row = [
                 str(h.id),
-                h.name,
+                name_cell,
                 h.frequency,
                 f"{mom.score:.0f}",
                 mom.trend,
@@ -446,7 +463,9 @@ def log(habit: str | None, days: int) -> None:
         table.add_column("note", style="dim")
 
         for c, h in pairs:
-            if c.value is not None:
+            if c.is_skipped:
+                val = "[yellow]⊘ skip[/yellow]"
+            elif c.value is not None:
                 val = f"{c.value:g}"
                 if h.unit:
                     val += f" {h.unit}"
@@ -720,10 +739,11 @@ def random(seed: int | None) -> None:
     today_ = date.today()
     with db.session() as conn:
         habits = db.list_habits(conn)
-        done_ids = {c.habit_id for c in db.completions_on(conn, today_)}
+        comps_today = db.completions_on(conn, today_)
+        excluded_ids = {c.habit_id for c in comps_today}
 
     candidates = [
-        h for h in habits if h.is_scheduled_on(today_) and h.id not in done_ids
+        h for h in habits if h.is_scheduled_on(today_) and h.id not in excluded_ids
     ]
     if not candidates:
         click.echo("nothing scheduled + undone today")
@@ -747,6 +767,185 @@ def undo(habit: str | None) -> None:
         db.delete_completion(conn, h.id, c.date)
 
     console.print(f"[yellow]undone[/yellow] {h.name} [dim]({c.date.isoformat()})[/dim]")
+
+
+@main.command(help="Mark a day deliberately skipped (vacation/sick/rest day).")
+@click.argument("habit")
+@click.option("--date", "date_str", default=None, help="override skip date (default: today)")
+@click.option("--note", default=None, help="reason (max 280 chars)")
+def skip(habit: str, date_str: str | None, note: str | None) -> None:
+    on = _parse_date_flag(date_str)
+    if note is not None and len(note) > Habit.NOTE_MAX:
+        raise click.ClickException(f"note too long (max {Habit.NOTE_MAX} chars)")
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+        if h.is_archived:
+            raise click.ClickException(f"{h.name} is archived — restore first")
+        if not h.is_scheduled_on(on):
+            raise click.ClickException(
+                f"{h.name} is not scheduled on {on.isoformat()} — nothing to skip"
+            )
+        db.upsert_completion(
+            conn,
+            Completion(
+                habit_id=h.id,
+                date=on,
+                value=None,
+                note=note,
+                duration_seconds=None,
+                status=COMPLETION_STATUS_SKIPPED,
+            ),
+        )
+    display = "today" if on == date.today() else on.isoformat()
+    console.print(f"[yellow]skip[/yellow] {h.name} [dim]— {display}[/dim]")
+
+
+@main.command(help="Pause a habit for a window. Skipped days don't decay momentum.")
+@click.argument("habit")
+@click.option("--until", "until_str", default=None, help="resume the day after (YYYY-MM-DD)")
+@click.option("--days", "days", type=int, default=None, help="pause for N calendar days from today")
+@click.option("--note", default=None, help="reason applied to each skip")
+def pause(
+    habit: str,
+    until_str: str | None,
+    days: int | None,
+    note: str | None,
+) -> None:
+    if (until_str is None) == (days is None):
+        raise click.ClickException("pass exactly one of --until or --days")
+    today_ = date.today()
+    if until_str is not None:
+        until = _parse_optional_date(until_str, "--until")
+        if until is None:
+            raise click.ClickException("--until cannot be empty")
+        if until < today_:
+            raise click.ClickException(
+                f"--until {until.isoformat()} is in the past"
+            )
+    else:
+        if days is None or days < 1:
+            raise click.ClickException("--days must be >= 1")
+        until = today_ + timedelta(days=days - 1)
+    if note is not None and len(note) > Habit.NOTE_MAX:
+        raise click.ClickException(f"note too long (max {Habit.NOTE_MAX} chars)")
+
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+        if h.is_archived:
+            raise click.ClickException(f"{h.name} is archived — restore first")
+        scheduled = scheduled_days_between(h, today_, until)
+        existing_dates = {
+            c.date
+            for c in db.completions_for_habit(conn, h.id, since=today_, until=until)
+        }
+        new_dates = [d for d in scheduled if d not in existing_dates]
+        inserted = db.bulk_skip_dates(conn, h.id, new_dates, note=note)
+
+    if inserted == 0 and not new_dates:
+        if existing_dates:
+            console.print(
+                f"[dim]no new skips — all scheduled days through "
+                f"{until.isoformat()} already have completions[/dim]"
+            )
+        else:
+            console.print(
+                f"[dim]{h.name} has no scheduled days through "
+                f"{until.isoformat()}[/dim]"
+            )
+        return
+    console.print(
+        f"[yellow]paused[/yellow] {h.name} [dim]— "
+        f"{inserted} skip(s) through {until.isoformat()}[/dim]"
+    )
+
+
+@main.command(help="Resume a paused habit by clearing future skips.")
+@click.argument("habit")
+def resume(habit: str) -> None:
+    today_ = date.today()
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+        removed = db.clear_future_skips(conn, h.id, today_)
+    if removed == 0:
+        console.print(f"[dim]{h.name} has no active pause[/dim]")
+        return
+    console.print(
+        f"[green]resumed[/green] {h.name} [dim]— cleared {removed} future skip(s)[/dim]"
+    )
+
+
+@main.command(help="Explain a habit's current momentum score.")
+@click.argument("habit")
+@click.option(
+    "--days",
+    type=int,
+    default=14,
+    show_default=True,
+    help="recent-days breakdown window",
+)
+def why(habit: str, days: int) -> None:
+    if days < 1:
+        raise click.ClickException("--days must be >= 1")
+    today_ = date.today()
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+        comps = db.completions_for_habit(conn, h.id)
+        paused_until = db.paused_until_date(conn, h.id, today_)
+
+    mom = compute_momentum(h, comps, today=today_)
+    by_date: dict[date, Completion] = {c.date: c for c in comps}
+    last_done = max(
+        (c.date for c in comps if c.is_done), default=None
+    )
+    sched = scheduled_days_between(h, h.created_at, today_)
+    last_miss = next(
+        (d for d in reversed(sched) if d not in by_date),
+        None,
+    )
+
+    console.print(
+        f"[bold]{h.name}[/bold]  [dim]({h.frequency}, alpha {h.alpha:g})[/dim]"
+    )
+    if h.is_archived:
+        console.print(f"  [red]archived {h.archived_at.isoformat()}[/red]")
+    if paused_until is not None:
+        console.print(f"  [yellow]paused until {paused_until.isoformat()}[/yellow]")
+    console.print(
+        f"  score [bold]{mom.score:.0f}[/bold]  trend {mom.trend}  "
+        f"rate [bold]{mom.completion_rate:.0%}[/bold] "
+        f"[dim]({mom.window_days}d)[/dim]"
+    )
+    console.print(
+        f"  last done: [cyan]{last_done.isoformat() if last_done else 'never'}[/cyan]"
+        f"   last miss: [red]{last_miss.isoformat() if last_miss else 'none'}[/red]"
+    )
+
+    # Per-day breakdown over the requested window. Shows D / M / S / -
+    # so you can eyeball what's pulling the score in either direction.
+    window_start = today_ - timedelta(days=days - 1)
+    glyphs: list[str] = []
+    for i in range(days):
+        d = window_start + timedelta(days=i)
+        if not h.is_scheduled_on(d):
+            glyphs.append("[dim]·[/dim]")
+            continue
+        c = by_date.get(d)
+        if c is None:
+            glyphs.append("[red]M[/red]")
+        elif c.is_skipped:
+            glyphs.append("[yellow]S[/yellow]")
+        else:
+            strength = completion_strength(c.value, h.target)
+            if strength >= 1.0:
+                glyphs.append("[green]D[/green]")
+            elif strength > 0:
+                glyphs.append("[green]d[/green]")
+            else:
+                glyphs.append("[red]M[/red]")
+    console.print(
+        f"  last {days}d: {' '.join(glyphs)}  "
+        f"[dim](D=done, d=partial, M=miss, S=skip, ·=off-day)[/dim]"
+    )
 
 
 @main.group(help="Read or write persistent preferences.")
@@ -839,12 +1038,21 @@ def today(fmt: str) -> None:
 
 
 def _today_summary() -> tuple[str, int, int]:
-    """Body shared by `today` and `remind`. Returns (message, done, total)."""
+    """Body shared by `today` and `remind`. Returns (message, done, total).
+
+    Skipped habits (active pauses) are removed from both numerator and
+    denominator so a vacation doesn't leave you staring at a permanent
+    'X/Y done' that you can't change."""
     today_ = date.today()
     with db.session() as conn:
         habits = db.list_habits(conn)
-        scheduled = [h for h in habits if h.is_scheduled_on(today_)]
-        done_ids = {c.habit_id for c in db.completions_on(conn, today_)}
+        comps_today = db.completions_on(conn, today_)
+        done_ids = {c.habit_id for c in comps_today if not c.is_skipped}
+        skipped_ids = {c.habit_id for c in comps_today if c.is_skipped}
+        scheduled = [
+            h for h in habits
+            if h.is_scheduled_on(today_) and h.id not in skipped_ids
+        ]
 
     total = len(scheduled)
     done_count = sum(1 for h in scheduled if h.id in done_ids)
