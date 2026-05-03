@@ -25,16 +25,22 @@ GLYPH_NONE = " "
 
 
 class CompletionGrid(Static):
-    """Visual 30-day (or N-day) completion grid for a single habit."""
+    """Visual 30-day (or N-day) completion grid for a single habit.
+
+    Sets its own border title/subtitle so the grid reads as a labeled panel
+    when the host screen wraps it in a border (the typical layout)."""
 
     DEFAULT_CSS = """
     CompletionGrid {
         height: auto;
         padding: 0 1;
+        border-title-align: left;
+        border-subtitle-align: right;
     }
     """
 
     DEFAULT_WINDOW = 30
+    LEGEND = "▓ done  ▒ partial  ░ miss  ▪ skip"
 
     def set_habit(
         self,
@@ -56,6 +62,8 @@ class CompletionGrid(Static):
             render_block(habit, start + timedelta(days=i), strengths, skips)
             for i in range(window)
         ]
+        self.border_title = f"{habit.name} — past {window} days"
+        self.border_subtitle = self.LEGEND
         self.update("".join(blocks))
 
 

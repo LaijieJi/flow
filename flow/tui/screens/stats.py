@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
+from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,9 +14,76 @@ from textual.widgets import DataTable, Footer, Header, Label
 
 from ... import db
 from ...models import Completion, Habit
-from ...momentum import compute_momentum, Momentum
+from ...momentum import completion_strength, compute_momentum, Momentum
 from ..widgets.completion_grid import CompletionGrid
 from ..widgets.navbar import NavBar
+
+
+SPARK_LEVELS = "▁▂▃▄▅▆▇█"
+SPARK_DAYS = 14
+
+
+def _score_tier(score: float) -> str:
+    if score >= 80:
+        return "green"
+    if score >= 40:
+        return "yellow"
+    return "red"
+
+
+def _rate_tier(rate: float) -> str:
+    if rate >= 0.8:
+        return "green"
+    if rate >= 0.4:
+        return "yellow"
+    return "red"
+
+
+def _trend_color(arrow: str) -> str:
+    return {"↗": "green", "↘": "red"}.get(arrow, "dim")
+
+
+def render_sparkline(
+    habit: Habit, completions: list[Completion], today: date, days: int = SPARK_DAYS
+) -> Text:
+    """Per-day sparkline for the last `days` days ending today.
+
+    Glyph maps:
+      - scheduled + done full     → █ (top level), tier-colored
+      - scheduled + done partial  → mid level by strength
+      - scheduled + missed        → · dim red
+      - skipped                   → ▪ yellow
+      - unscheduled               → · dim
+      - before created            → space
+    """
+    start = today - timedelta(days=days - 1)
+    by_date = {c.date: c for c in completions if start <= c.date <= today}
+    text = Text()
+    levels = SPARK_LEVELS
+    last = len(levels) - 1
+    for i in range(days):
+        d = start + timedelta(days=i)
+        if d < habit.created_at:
+            text.append(" ")
+            continue
+        c = by_date.get(d)
+        if c is not None and c.is_skipped:
+            text.append("▪", style="yellow")
+            continue
+        if not habit.is_scheduled_on(d):
+            text.append("·", style="dim")
+            continue
+        if c is None:
+            text.append("·", style="red dim")
+            continue
+        s = completion_strength(c.value, habit.target)
+        if s <= 0:
+            text.append("·", style="red dim")
+            continue
+        # 0..1 → 1..last so any presence visibly clears the baseline.
+        idx = max(1, min(last, round(s * last)))
+        text.append(levels[idx], style="green" if s >= 1.0 else "green dim")
+    return text
 
 
 class StatsScreen(Screen):
@@ -47,13 +115,9 @@ class StatsScreen(Screen):
         max-height: 55%;
     }
     CompletionGrid {
-        margin: 1 2 0 2;
+        margin: 1 2 1 2;
         border: round $accent;
         padding: 0 1;
-    }
-    #grid-caption {
-        margin: 0 2 1 2;
-        color: $text-muted;
     }
     """
 
@@ -81,13 +145,12 @@ class StatsScreen(Screen):
         yield Label("stats — last 30 days", id="stats-title")
         yield DataTable(id="stats-table", cursor_type="row", zebra_stripes=False)
         yield CompletionGrid(id="grid")
-        yield Label("", id="grid-caption")
         yield Footer()
 
     def on_mount(self) -> None:
         self.title = "flow stats"
         table = self.query_one(DataTable)
-        table.add_columns("habit", "score", "trend", "rate")
+        table.add_columns("habit", f"last {SPARK_DAYS}", "score", "trend", "rate")
         self._load()
         if self.watch_interval is not None:
             self._watch_timer = self.set_interval(self.watch_interval, self._load)
@@ -115,14 +178,22 @@ class StatsScreen(Screen):
         for h in self.habits:
             mom = compute_momentum(h, self._completions[h.id], today=self.today)
             self._momentums[h.id] = mom
-            name = (
-                f"[dim]{h.name} (archived)[/dim]" if h.is_archived else h.name
+            if h.is_archived:
+                name_cell = Text(f"{h.name} (archived)", style="dim")
+            else:
+                name_cell = Text(h.name)
+            spark = render_sparkline(h, self._completions[h.id], today=self.today)
+            score_cell = Text(f"{mom.score:.0f}", style=_score_tier(mom.score))
+            trend_cell = Text(mom.trend, style=_trend_color(mom.trend))
+            rate_cell = Text(
+                f"{mom.completion_rate:.0%}", style=_rate_tier(mom.completion_rate)
             )
             table.add_row(
-                name,
-                f"{mom.score:.0f}",
-                mom.trend,
-                f"{mom.completion_rate:.0%}",
+                name_cell,
+                spark,
+                score_cell,
+                trend_cell,
+                rate_cell,
                 key=str(h.id),
             )
 
@@ -151,9 +222,6 @@ class StatsScreen(Screen):
         h = self.habits[row]
         self.query_one(CompletionGrid).set_habit(
             h, self._completions[h.id], today=self.today
-        )
-        self.query_one("#grid-caption", Label).update(
-            f"{h.name} — past 30 days"
         )
 
     # -- actions ---------------------------------------------------------------

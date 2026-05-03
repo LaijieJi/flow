@@ -8,14 +8,14 @@ screen can be exited at any point without losing state.
 from __future__ import annotations
 
 import random
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.widgets import Footer, Header, ListItem, ListView, Static
 
 from ... import db
 from ...models import (
@@ -25,7 +25,7 @@ from ...models import (
     Habit,
     parse_duration,
 )
-from ..widgets.habit_row import HabitRow
+from ..widgets.habit_row import RECENT_DAYS, HabitRow
 from ..widgets.navbar import NavBar
 from .add_habit import AddHabitScreen
 from .edit_habit import EditHabitScreen
@@ -76,13 +76,16 @@ class CheckScreen(Screen):
     CheckScreen {
         align: center top;
     }
-    #title {
-        margin: 1 2;
+    #header {
+        border: round $accent;
+        margin: 1 2 0 2;
+        padding: 0 1;
         color: $text;
+        height: auto;
     }
     #rows {
         border: round $accent;
-        margin: 0 2 1 2;
+        margin: 1 2 1 2;
         padding: 0 1;
         height: auto;
         max-height: 80%;
@@ -103,9 +106,7 @@ class CheckScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield NavBar(current="check")
-        yield Label(
-            f"Today's habits — {self.today:%A, %b %d}", id="title"
-        )
+        yield Static("", id="header", markup=True)
         yield ListView(id="rows")
         yield Footer()
 
@@ -121,10 +122,20 @@ class CheckScreen(Screen):
     # -- data ------------------------------------------------------------------
 
     def _reload(self, focus_add_row: bool = False) -> None:
+        recent_since = self.today - timedelta(days=RECENT_DAYS)
+        recent_until = self.today - timedelta(days=1)
         with db.session(self.db_path) as conn:
             habits = db.list_habits(conn)
             completions = db.completions_on(conn, self.today)
+            recent_by_habit: dict[int, list[Completion]] = {
+                h.id: db.completions_for_habit(
+                    conn, h.id, since=recent_since, until=recent_until
+                )
+                for h in habits
+            }
         comp_map: dict[int, Completion] = {c.habit_id: c for c in completions}
+
+        self._update_header(habits, comp_map)
 
         lv = self.query_one("#rows", ListView)
         lv.clear()
@@ -133,7 +144,14 @@ class CheckScreen(Screen):
         lv.append(AddHabitRow())
 
         for h in habits:
-            lv.append(HabitRow(h, self.today, comp_map.get(h.id)))
+            lv.append(
+                HabitRow(
+                    h,
+                    self.today,
+                    comp_map.get(h.id),
+                    recent=recent_by_habit.get(h.id, []),
+                )
+            )
 
         target_index = 0
         if not focus_add_row and habits:
@@ -157,6 +175,56 @@ class CheckScreen(Screen):
         lv = self.query_one("#rows", ListView)
         item = lv.highlighted_child
         return item if isinstance(item, HabitRow) else None
+
+    def _update_header(
+        self, habits: list[Habit], comp_map: dict[int, Completion]
+    ) -> None:
+        """Render today's progress summary above the habit list. Skipped
+        habits are excluded from the denominator — they're explicitly off the
+        hook for the day, not an outstanding TODO."""
+        scheduled = [h for h in habits if h.is_scheduled_on(self.today)]
+        active: list[Habit] = []
+        skipped = 0
+        done = 0
+        for h in scheduled:
+            c = comp_map.get(h.id)
+            if c is not None and c.is_skipped:
+                skipped += 1
+                continue
+            active.append(h)
+            if c is not None:
+                done += 1
+        total = len(active)
+        remaining = total - done
+
+        date_str = f"{self.today:%A, %b %d}"
+        if total == 0:
+            if skipped:
+                summary = f"[dim]{skipped} skipped · nothing else scheduled[/dim]"
+            else:
+                summary = "[dim]no habits scheduled today[/dim]"
+            text = f"[bold]{date_str}[/bold]   {summary}"
+        else:
+            dots = "[green]●[/green]" * done + "[dim]○[/dim]" * remaining
+            pct = int(round(done / total * 100))
+            tier = (
+                "green"
+                if pct >= 80
+                else "yellow"
+                if pct >= 40
+                else "red"
+            )
+            tail = ""
+            if skipped:
+                tail = f"   [yellow dim]· {skipped} skipped[/yellow dim]"
+            text = (
+                f"[bold]{date_str}[/bold]   "
+                f"{dots}   "
+                f"[bold]{done}[/bold][dim]/{total}[/dim] done   "
+                f"[{tier}]{pct}%[/{tier}]"
+                f"{tail}"
+            )
+        self.query_one("#header", Static).update(text)
 
     # -- add habit -------------------------------------------------------------
 
