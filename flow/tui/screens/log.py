@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Label
+from textual.widgets import DataTable, Footer, Header, Static
 
 from ... import db
 from ...models import format_duration
@@ -32,13 +33,17 @@ class LogScreen(Screen):
     LogScreen {
         align: center top;
     }
-    #log-title {
-        margin: 1 2;
+    #log-header {
+        border: round $accent;
+        margin: 1 2 0 2;
+        padding: 0 1;
+        color: $text;
+        height: auto;
     }
     DataTable {
-        margin: 0 2 1 2;
+        margin: 1 2 1 2;
         height: auto;
-        max-height: 85%;
+        max-height: 80%;
     }
     """
 
@@ -56,7 +61,7 @@ class LogScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield NavBar(current="log")
-        yield Label("", id="log-title")
+        yield Static("", id="log-header", markup=True)
         yield DataTable(id="log-table", cursor_type="row", zebra_stripes=False)
         yield Footer()
 
@@ -68,35 +73,53 @@ class LogScreen(Screen):
 
     def _load(self) -> None:
         since = self.today - timedelta(days=self.days - 1)
-        self.query_one("#log-title", Label).update(
-            f"log — last {self.days} days"
-        )
         with db.session(self.db_path) as conn:
             pairs = db.all_completions(conn, since=since)
+
+        done = sum(1 for c, _ in pairs if not c.is_skipped)
+        skipped = sum(1 for c, _ in pairs if c.is_skipped)
+        header = (
+            f"[bold]log[/bold]  "
+            f"[dim]last {self.days} days · {since:%b %d} → {self.today:%b %d}[/dim]   "
+            f"[green]●[/green] [bold]{done}[/bold] done   "
+            f"[yellow]⊘[/yellow] [bold]{skipped}[/bold] skipped   "
+            f"[dim]· {len(pairs)} entries[/dim]"
+        )
+        self.query_one("#log-header", Static).update(header)
 
         table = self.query_one(DataTable)
         table.clear()
         if not pairs:
-            table.add_row("—", "no completions in window", "", "", "")
+            table.add_row(
+                Text("—", style="dim"),
+                Text("no completions in window", style="dim italic"),
+                "",
+                "",
+                "",
+            )
             return
         for c, h in pairs:
             if c.is_skipped:
-                val = "⊘ skip"
+                value_cell = Text("⊘ skip", style="yellow")
             elif c.value is not None:
-                val = f"{c.value:g}"
+                txt = f"{c.value:g}"
                 if h.unit:
-                    val += f" {h.unit}"
+                    txt += f" {h.unit}"
+                value_cell = Text(txt, style="green")
             else:
-                val = "✓"
+                value_cell = Text("✓", style="green")
             note = c.note or ""
             if len(note) > 60:
                 note = note[:57] + "..."
+            note_cell = Text(note, style="dim italic") if note else Text("")
+            time_str = format_duration(c.duration_seconds)
+            time_cell = Text(time_str, style="cyan") if time_str else Text("")
             table.add_row(
-                c.date.isoformat(),
-                h.name,
-                val,
-                format_duration(c.duration_seconds),
-                note,
+                Text(c.date.isoformat(), style="dim"),
+                Text(h.name),
+                value_cell,
+                time_cell,
+                note_cell,
             )
 
     def action_go_back(self) -> None:
