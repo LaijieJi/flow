@@ -17,6 +17,7 @@ from ...models import Habit
 from ...momentum import compute_momentum
 from ...review import habit_score_sparkline
 from ..widgets.completion_grid import CompletionGrid
+from ..widgets.year_heatmap import YearHeatmap
 from .edit_habit import EditHabitScreen
 
 
@@ -46,6 +47,11 @@ class DetailScreen(Screen):
     }
     CompletionGrid {
         margin: 1 2;
+        border: round $accent;
+        padding: 0 1;
+    }
+    YearHeatmap {
+        margin: 0 2 1 2;
         border: round $accent;
         padding: 0 1;
     }
@@ -80,6 +86,7 @@ class DetailScreen(Screen):
         yield Label("", id="detail-summary")
         yield Label("", id="detail-sparkline")
         yield CompletionGrid(id="detail-grid")
+        yield YearHeatmap(id="detail-year")
         yield Label("recent notes", id="notes-title")
         with VerticalScroll(id="notes-box"):
             yield Static("", id="notes-body")
@@ -137,6 +144,7 @@ class DetailScreen(Screen):
         self.query_one("#detail-sparkline", Label).update(spark_line)
 
         self.query_one(CompletionGrid).set_habit(self.habit, comps, today=self.today)
+        self.query_one(YearHeatmap).set_habit(self.habit, comps, today=self.today)
 
         notes = sorted(
             (c for c in comps if c.note), key=lambda c: c.date, reverse=True
