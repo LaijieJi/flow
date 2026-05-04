@@ -8,7 +8,7 @@ not logged — only the disciplined time counts.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -205,7 +205,9 @@ class PomodoroScreen(Screen):
         assert self.habit is not None  # callers guard on habit is not None
         with db.session(self.db_path) as conn:
             existing = self._load_existing(conn)
-            merged = pomodoro.merge_session(existing, self.habit, seconds, self.today)
+            merged = pomodoro.merge_session(
+                existing, self.habit, seconds, self.today, completed_at=datetime.now()
+            )
             db.upsert_completion(conn, merged)
         self.notify(
             f"✓ {self.habit.name} +{seconds // 60}m logged", timeout=2

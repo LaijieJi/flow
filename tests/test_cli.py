@@ -3,7 +3,7 @@ storage into a per-test temp file."""
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -301,6 +301,23 @@ def test_done_with_backdate(runner: CliRunner, db_path: Path) -> None:
         h = db.list_habits(conn)[0]
         c = db.completions_for_habit(conn, h.id)[0]
     assert c.date.isoformat() == yesterday
+    # backfilled completions don't know the time of day → NULL stamp
+    assert c.completed_at is None
+
+
+def test_done_live_stamps_completed_at(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["done", "Exercise"])
+    assert r.exit_code == 0, r.output
+
+    with db.session(db_path) as conn:
+        h = db.list_habits(conn)[0]
+        c = db.completions_for_habit(conn, h.id)[0]
+    assert c.completed_at is not None
+    # Stamp should be within a few seconds of "now". This guards against
+    # accidental fallback to date-only or epoch-zero defaults.
+    delta = abs((datetime.now() - c.completed_at).total_seconds())
+    assert delta < 5
 
 
 def test_done_future_date_rejected(runner: CliRunner, db_path: Path) -> None:

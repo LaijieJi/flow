@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import ClassVar
 
 
@@ -179,6 +179,7 @@ class Completion:
     note: str | None = None
     duration_seconds: int | None = None
     status: str = COMPLETION_STATUS_DONE
+    completed_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.note is not None and len(self.note) > Habit.NOTE_MAX:

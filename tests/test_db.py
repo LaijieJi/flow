@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -254,3 +254,51 @@ def test_session_rolls_back_on_error(tmp_db: Path) -> None:
 
     with db.session(tmp_db) as conn:
         assert db.list_habits(conn) == []
+
+
+def test_completed_at_round_trips(conn: sqlite3.Connection) -> None:
+    h = db.insert_habit(conn, Habit(name="T", frequency="daily"))
+    stamp = datetime(2026, 5, 4, 14, 32, 17)
+    db.upsert_completion(
+        conn,
+        Completion(habit_id=h.id, date=date(2026, 5, 4), completed_at=stamp),
+    )
+    fetched = db.get_completion(conn, h.id, date(2026, 5, 4))
+    assert fetched is not None
+    assert fetched.completed_at == stamp
+
+
+def test_completed_at_null_preserved(conn: sqlite3.Connection) -> None:
+    h = db.insert_habit(conn, Habit(name="T", frequency="daily"))
+    db.upsert_completion(
+        conn,
+        Completion(habit_id=h.id, date=date(2026, 5, 4)),
+    )
+    fetched = db.get_completion(conn, h.id, date(2026, 5, 4))
+    assert fetched is not None
+    assert fetched.completed_at is None
+
+
+def test_completed_at_overwritten_by_upsert(conn: sqlite3.Connection) -> None:
+    h = db.insert_habit(conn, Habit(name="T", frequency="daily"))
+    first = datetime(2026, 5, 4, 9, 0, 0)
+    second = datetime(2026, 5, 4, 18, 30, 0)
+    db.upsert_completion(
+        conn,
+        Completion(habit_id=h.id, date=date(2026, 5, 4), completed_at=first),
+    )
+    db.upsert_completion(
+        conn,
+        Completion(habit_id=h.id, date=date(2026, 5, 4), completed_at=second),
+    )
+    fetched = db.get_completion(conn, h.id, date(2026, 5, 4))
+    assert fetched.completed_at == second
+
+
+def test_skip_rows_have_null_completed_at(conn: sqlite3.Connection) -> None:
+    h = db.insert_habit(conn, Habit(name="T", frequency="daily"))
+    db.bulk_skip_dates(conn, h.id, [date(2026, 5, 4)])
+    fetched = db.get_completion(conn, h.id, date(2026, 5, 4))
+    assert fetched is not None
+    assert fetched.is_skipped
+    assert fetched.completed_at is None

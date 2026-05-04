@@ -124,10 +124,29 @@ class DetailScreen(Screen):
         )
 
         mom = compute_momentum(self.habit, comps, today=self.today)
+        last_done = next(
+            (
+                c
+                for c in reversed(comps)
+                if c.is_done and c.completed_at is not None
+            ),
+            None,
+        )
+        last_done_tag = ""
+        if last_done is not None:
+            stamp = last_done.completed_at
+            if last_done.date == self.today:
+                last_done_tag = f"  [dim]· last done {stamp.strftime('%H:%M')}[/dim]"
+            else:
+                last_done_tag = (
+                    f"  [dim]· last done {last_done.date.isoformat()} "
+                    f"{stamp.strftime('%H:%M')}[/dim]"
+                )
         self.summary_text = (
             f"score [bold]{mom.score:.0f}[/bold]  {mom.trend}  "
             f"rate [bold]{mom.completion_rate:.0%}[/bold] "
             f"[dim]({mom.window_days}d)[/dim]"
+            + last_done_tag
         )
         self.query_one("#detail-summary", Label).update(self.summary_text)
 

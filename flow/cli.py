@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random as _random
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Iterable
 
 import click
@@ -276,6 +276,7 @@ def done(
                 value=value,
                 note=note,
                 duration_seconds=duration_seconds,
+                completed_at=datetime.now() if date_str is None else None,
             ),
         )
 

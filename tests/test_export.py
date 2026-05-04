@@ -69,6 +69,7 @@ def test_csv_header_and_rows(seeded: Path) -> None:
         "duration_seconds",
         "note",
         "status",
+        "completed_at",
     ]
     rows = list(reader)
     assert len(rows) == n == 4  # 3 Exercise + 1 Read, Old is archived
@@ -96,7 +97,7 @@ def test_csv_empty_returns_header_only(tmp_path: Path) -> None:
     assert n == 0
     assert (
         buf.getvalue().strip()
-        == "date,habit,frequency,unit,target,value,duration_seconds,note,status"
+        == "date,habit,frequency,unit,target,value,duration_seconds,note,status,completed_at"
     )
 
 
@@ -163,6 +164,7 @@ def test_json_structure(seeded: Path) -> None:
         "duration_seconds": None,
         "note": "focused",
         "status": "done",
+        "completed_at": None,
     }
 
 
@@ -217,7 +219,7 @@ def test_cli_export_csv_default(cli_env: Path) -> None:
     r = runner.invoke(main, ["export"])
     assert r.exit_code == 0, r.output
     lines = r.output.strip().splitlines()
-    assert lines[0] == "date,habit,frequency,unit,target,value,duration_seconds,note,status"
+    assert lines[0] == "date,habit,frequency,unit,target,value,duration_seconds,note,status,completed_at"
     assert any("Exercise" in ln for ln in lines[1:])
 
 

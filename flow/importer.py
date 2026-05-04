@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, TextIO
 
 from . import db
@@ -139,6 +139,15 @@ def _completion_from_payload(
         raise FlowImportError(
             f"{ctx}: status must be one of {sorted(VALID_COMPLETION_STATUS)}"
         )
+    completed_at_raw = raw.get("completed_at")
+    completed_at = None
+    if completed_at_raw is not None:
+        if not isinstance(completed_at_raw, str):
+            raise FlowImportError(f"{ctx}: completed_at must be string or null")
+        try:
+            completed_at = datetime.fromisoformat(completed_at_raw)
+        except ValueError as e:
+            raise FlowImportError(f"{ctx}: invalid completed_at: {e}")
     return Completion(
         habit_id=habit_id,
         date=on,
@@ -146,6 +155,7 @@ def _completion_from_payload(
         note=note,
         duration_seconds=duration,
         status=status,
+        completed_at=completed_at,
     )
 
 

@@ -8,7 +8,7 @@ here means the behavior is testable without spinning up a TUI.
 
 from __future__ import annotations
 
-from datetime import date as _date
+from datetime import date as _date, datetime
 
 from .models import Completion, Habit
 
@@ -26,6 +26,7 @@ def merge_session(
     habit: Habit,
     session_seconds: int,
     on: _date,
+    completed_at: datetime | None = None,
 ) -> Completion:
     """Return a Completion that rolls `session_seconds` into `existing` (if any).
 
@@ -34,6 +35,9 @@ def merge_session(
       the derived value is recomputed from the *total* accumulated duration so
       momentum tracks the entire day's focus time, not just the last session.
     - Notes and explicit numeric values are preserved untouched.
+    - `completed_at` (when provided) overwrites the existing stamp — it
+      represents the most recent activity, which is what time-of-day insights
+      should reflect. Falls back to the existing stamp when omitted.
     """
     if session_seconds < 0:
         raise ValueError("session_seconds must be >= 0")
@@ -47,12 +51,16 @@ def merge_session(
         if value is None or _looks_derived(existing, habit):
             value = derived
 
+    if completed_at is None and existing is not None:
+        completed_at = existing.completed_at
+
     return Completion(
         habit_id=habit.id,
         date=on,
         value=value,
         note=existing.note if existing else None,
         duration_seconds=total_duration if total_duration > 0 else None,
+        completed_at=completed_at,
     )
 
 

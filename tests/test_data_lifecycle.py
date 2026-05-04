@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -57,6 +57,31 @@ def _export_payload(src: Path) -> dict:
 
 
 # ---- importer (round-trip + conflict modes) ---------------------------------
+
+
+def test_completed_at_survives_export_import(tmp_path: Path) -> None:
+    src = tmp_path / "src.db"
+    stamp = datetime(2026, 4, 13, 14, 32, 17)
+    with db.session(src) as conn:
+        h = db.insert_habit(conn, Habit(name="X", frequency="daily"))
+        db.upsert_completion(
+            conn,
+            Completion(habit_id=h.id, date=date(2026, 4, 13), completed_at=stamp),
+        )
+        # And a backfilled-style row with NULL stamp for contrast.
+        db.upsert_completion(
+            conn,
+            Completion(habit_id=h.id, date=date(2026, 4, 12)),
+        )
+
+    payload = _export_payload(src)
+    dest = tmp_path / "dest.db"
+    with db.session(dest) as conn:
+        importer.import_payload(conn, payload, conflict="skip")
+        loaded = db.completions_for_habit(conn, db.list_habits(conn)[0].id)
+    by_date = {c.date: c for c in loaded}
+    assert by_date[date(2026, 4, 13)].completed_at == stamp
+    assert by_date[date(2026, 4, 12)].completed_at is None
 
 
 def test_import_into_empty_db_roundtrips(seeded_source: Path, tmp_path: Path) -> None:

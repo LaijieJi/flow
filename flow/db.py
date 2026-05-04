@@ -11,7 +11,7 @@ import os
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from importlib import resources
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -33,7 +33,19 @@ def _convert_date(b: bytes) -> date:
     return date.fromisoformat(b.decode())
 
 
+def _adapt_datetime(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+def _parse_completed_at(value: str | None) -> datetime | None:
+    """Read a TEXT column back into a datetime. NULL stays None."""
+    if value is None:
+        return None
+    return datetime.fromisoformat(value)
+
+
 sqlite3.register_adapter(date, _adapt_date)
+sqlite3.register_adapter(datetime, _adapt_datetime)
 sqlite3.register_converter("date", _convert_date)
 sqlite3.register_converter("DATE", _convert_date)
 
@@ -158,6 +170,9 @@ def _row_to_completion(row: sqlite3.Row) -> Completion:
     keys = row.keys()
     duration = row["duration_seconds"] if "duration_seconds" in keys else None
     status = row["status"] if "status" in keys else "done"
+    completed_at = (
+        _parse_completed_at(row["completed_at"]) if "completed_at" in keys else None
+    )
     return Completion(
         id=row["id"],
         habit_id=row["habit_id"],
@@ -166,6 +181,7 @@ def _row_to_completion(row: sqlite3.Row) -> Completion:
         note=row["note"],
         duration_seconds=duration,
         status=status or "done",
+        completed_at=completed_at,
     )
 
 
@@ -310,12 +326,14 @@ def upsert_completion(conn: sqlite3.Connection, completion: Completion) -> Compl
     """Insert or replace today's completion for a habit (enforced unique on
     (habit_id, date)). Returns the stored row."""
     cur = conn.execute(
-        "INSERT INTO completions (habit_id, date, value, note, duration_seconds, status) "
-        "VALUES (?, ?, ?, ?, ?, ?) "
+        "INSERT INTO completions "
+        "(habit_id, date, value, note, duration_seconds, status, completed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(habit_id, date) DO UPDATE SET "
         "value = excluded.value, note = excluded.note, "
         "duration_seconds = excluded.duration_seconds, "
-        "status = excluded.status",
+        "status = excluded.status, "
+        "completed_at = excluded.completed_at",
         (
             completion.habit_id,
             completion.date,
@@ -323,6 +341,7 @@ def upsert_completion(conn: sqlite3.Connection, completion: Completion) -> Compl
             completion.note,
             completion.duration_seconds,
             completion.status,
+            completion.completed_at,
         ),
     )
     if cur.lastrowid:
@@ -403,6 +422,9 @@ def all_completions(
             note=r["note"],
             duration_seconds=r["duration_seconds"],
             status=(r["status"] if "status" in r.keys() else "done") or "done",
+            completed_at=_parse_completed_at(r["completed_at"])
+            if "completed_at" in r.keys()
+            else None,
         )
         habit = Habit(
             id=r["habit_id"],
@@ -450,6 +472,9 @@ def most_recent_completion(
         note=row["note"],
         duration_seconds=row["duration_seconds"],
         status=(row["status"] if "status" in row.keys() else "done") or "done",
+        completed_at=_parse_completed_at(row["completed_at"])
+        if "completed_at" in row.keys()
+        else None,
     )
     habit = Habit(
         id=row["habit_id"],
@@ -482,8 +507,9 @@ def insert_completion(
 ) -> Completion:
     """Strict insert (no upsert). Raises sqlite3.IntegrityError on conflict."""
     cur = conn.execute(
-        "INSERT INTO completions (habit_id, date, value, note, duration_seconds, status) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO completions "
+        "(habit_id, date, value, note, duration_seconds, status, completed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             completion.habit_id,
             completion.date,
@@ -491,6 +517,7 @@ def insert_completion(
             completion.note,
             completion.duration_seconds,
             completion.status,
+            completion.completed_at,
         ),
     )
     completion.id = cur.lastrowid
@@ -513,10 +540,19 @@ def bulk_insert_completions(
     conn: sqlite3.Connection, completions: Iterable[Completion]
 ) -> None:
     conn.executemany(
-        "INSERT INTO completions (habit_id, date, value, note, duration_seconds, status) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO completions "
+        "(habit_id, date, value, note, duration_seconds, status, completed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
-            (c.habit_id, c.date, c.value, c.note, c.duration_seconds, c.status)
+            (
+                c.habit_id,
+                c.date,
+                c.value,
+                c.note,
+                c.duration_seconds,
+                c.status,
+                c.completed_at,
+            )
             for c in completions
         ],
     )

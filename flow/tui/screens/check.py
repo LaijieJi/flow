@@ -8,7 +8,7 @@ screen can be exited at any point without losing state.
 from __future__ import annotations
 
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from textual import work
@@ -30,6 +30,20 @@ from ..widgets.navbar import NavBar
 from .add_habit import AddHabitScreen
 from .edit_habit import EditHabitScreen
 from .prompt import PromptScreen
+
+
+def _stamp_for_edit(existing: Completion | None, status: str) -> datetime | None:
+    """Pick the `completed_at` value for an interactive edit on the check screen.
+
+    Preserves an existing stamp so editing a note or value later doesn't move
+    the recorded log time. Stamps `now()` when transitioning a fresh row to
+    `done`. Skip rows always get NULL — the convention enforced by the v6
+    migration."""
+    if existing is not None:
+        return existing.completed_at
+    if status == COMPLETION_STATUS_DONE:
+        return datetime.now()
+    return None
 
 
 class AddHabitRow(ListItem):
@@ -303,6 +317,7 @@ class CheckScreen(Screen):
                     habit_id=row.habit.id,
                     date=self.today,
                     status=COMPLETION_STATUS_DONE,
+                    completed_at=_stamp_for_edit(None, COMPLETION_STATUS_DONE),
                 )
                 db.upsert_completion(conn, c)
                 row.completion = c
@@ -368,6 +383,7 @@ class CheckScreen(Screen):
                 value=value,
                 note=note,
                 duration_seconds=dur,
+                completed_at=_stamp_for_edit(existing, COMPLETION_STATUS_DONE),
             )
             db.upsert_completion(conn, c)
             row.completion = c
@@ -412,6 +428,7 @@ class CheckScreen(Screen):
                 value=value,
                 note=note,
                 duration_seconds=seconds,
+                completed_at=_stamp_for_edit(existing, COMPLETION_STATUS_DONE),
             )
             db.upsert_completion(conn, c)
             row.completion = c
@@ -450,6 +467,7 @@ class CheckScreen(Screen):
                 note=note,
                 duration_seconds=dur,
                 status=status,
+                completed_at=_stamp_for_edit(existing, status),
             )
             db.upsert_completion(conn, c)
             row.completion = c

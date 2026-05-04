@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -78,6 +78,34 @@ def test_merge_rejects_negative_session() -> None:
     h = Habit(id=1, name="Write", frequency="daily")
     with pytest.raises(ValueError):
         pomodoro.merge_session(None, h, -1, date(2026, 4, 20))
+
+
+def test_merge_stamps_completed_at_when_provided() -> None:
+    h = Habit(id=1, name="Write", frequency="daily")
+    today = date(2026, 4, 20)
+    stamp = datetime(2026, 4, 20, 14, 32, 0)
+    out = pomodoro.merge_session(None, h, 1500, today, completed_at=stamp)
+    assert out.completed_at == stamp
+
+
+def test_merge_overwrites_existing_completed_at_with_new_stamp() -> None:
+    """Most-recent activity should reflect the latest session, not the first."""
+    h = Habit(id=1, name="Write", frequency="daily")
+    today = date(2026, 4, 20)
+    first_stamp = datetime(2026, 4, 20, 9, 0, 0)
+    later_stamp = datetime(2026, 4, 20, 18, 30, 0)
+    first = pomodoro.merge_session(None, h, 1500, today, completed_at=first_stamp)
+    second = pomodoro.merge_session(first, h, 1500, today, completed_at=later_stamp)
+    assert second.completed_at == later_stamp
+
+
+def test_merge_falls_back_to_existing_stamp_when_omitted() -> None:
+    h = Habit(id=1, name="Write", frequency="daily")
+    today = date(2026, 4, 20)
+    stamp = datetime(2026, 4, 20, 9, 0, 0)
+    existing = Completion(habit_id=h.id, date=today, completed_at=stamp)
+    out = pomodoro.merge_session(existing, h, 1500, today)
+    assert out.completed_at == stamp
 
 
 # ---- format_mmss --------------------------------------------------------------
