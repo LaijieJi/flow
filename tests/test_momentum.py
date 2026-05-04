@@ -359,3 +359,111 @@ class TestComputeMomentum:
         mom = m.compute_momentum(h, completions, today=today)
         assert mom.score > 90.0
         assert mom.completion_rate == 1.0
+
+
+# ---- compute_streaks ----------------------------------------------------------
+
+
+class TestComputeStreaks:
+    def test_no_scheduled_days(self) -> None:
+        today = date(2026, 4, 13)
+        h = Habit(name="X", frequency="daily", created_at=today + timedelta(days=1))
+        assert m.compute_streaks(h, [], today=today) == (0, 0)
+
+    def test_perfect_record(self) -> None:
+        today = date(2026, 4, 13)
+        start = today - timedelta(days=9)
+        h = Habit(name="P", frequency="daily", created_at=start)
+        comps = [Completion(habit_id=1, date=start + timedelta(days=i)) for i in range(10)]
+        assert m.compute_streaks(h, comps, today=today) == (10, 10)
+
+    def test_today_scheduled_but_not_done_does_not_reset(self) -> None:
+        today = date(2026, 4, 13)
+        start = today - timedelta(days=9)
+        h = Habit(name="P", frequency="daily", created_at=start)
+        # Done 9 days, today scheduled but no completion yet
+        comps = [Completion(habit_id=1, date=start + timedelta(days=i)) for i in range(9)]
+        cur, best = m.compute_streaks(h, comps, today=today)
+        assert cur == 9
+        assert best == 9
+
+    def test_miss_breaks_streak(self) -> None:
+        today = date(2026, 4, 13)
+        start = today - timedelta(days=9)
+        h = Habit(name="P", frequency="daily", created_at=start)
+        # Miss day index 4, complete the rest
+        comps = [
+            Completion(habit_id=1, date=start + timedelta(days=i))
+            for i in range(10) if i != 4
+        ]
+        cur, best = m.compute_streaks(h, comps, today=today)
+        # After the miss: days 5..9 = 5 in a row including today
+        assert cur == 5
+        # Best run: days 0..3 (4) or 5..9 (5) -> 5
+        assert best == 5
+
+    def test_skipped_day_does_not_break_streak(self) -> None:
+        today = date(2026, 4, 13)
+        start = today - timedelta(days=4)
+        h = Habit(name="P", frequency="daily", created_at=start)
+        comps = [
+            Completion(habit_id=1, date=start + timedelta(days=0)),
+            Completion(habit_id=1, date=start + timedelta(days=1)),
+            Completion(habit_id=1, date=start + timedelta(days=2), status="skipped"),
+            Completion(habit_id=1, date=start + timedelta(days=3)),
+            Completion(habit_id=1, date=start + timedelta(days=4)),
+        ]
+        cur, best = m.compute_streaks(h, comps, today=today)
+        assert cur == 4
+        assert best == 4
+
+    def test_target_zero_value_breaks_streak(self) -> None:
+        today = date(2026, 4, 13)
+        start = today - timedelta(days=4)
+        h = Habit(name="Read", frequency="daily", target=20, created_at=start)
+        comps = [
+            Completion(habit_id=1, date=start + timedelta(days=0), value=20),
+            Completion(habit_id=1, date=start + timedelta(days=1), value=20),
+            Completion(habit_id=1, date=start + timedelta(days=2), value=0),
+            Completion(habit_id=1, date=start + timedelta(days=3), value=20),
+            Completion(habit_id=1, date=start + timedelta(days=4), value=20),
+        ]
+        cur, best = m.compute_streaks(h, comps, today=today)
+        assert cur == 2
+        assert best == 2
+
+    def test_partial_target_counts_toward_streak(self) -> None:
+        today = date(2026, 4, 13)
+        start = today - timedelta(days=2)
+        h = Habit(name="Read", frequency="daily", target=20, created_at=start)
+        comps = [
+            Completion(habit_id=1, date=start + timedelta(days=i), value=5)
+            for i in range(3)
+        ]
+        cur, best = m.compute_streaks(h, comps, today=today)
+        assert cur == 3
+        assert best == 3
+
+    def test_best_exceeds_current(self) -> None:
+        today = date(2026, 4, 13)
+        start = today - timedelta(days=9)
+        h = Habit(name="P", frequency="daily", created_at=start)
+        # Days 0..6 done (7-day run), miss 7, done 8 and 9 (2-day current run)
+        comps = [
+            Completion(habit_id=1, date=start + timedelta(days=i))
+            for i in [0, 1, 2, 3, 4, 5, 6, 8, 9]
+        ]
+        cur, best = m.compute_streaks(h, comps, today=today)
+        assert cur == 2
+        assert best == 7
+
+    def test_only_unscheduled_days_excluded(self) -> None:
+        # MWF habit. Only Mon/Wed/Fri count.
+        today = date(2026, 4, 13)  # Monday
+        start = today - timedelta(days=13)  # Tuesday two weeks prior
+        h = Habit(name="MWF", frequency="mon,wed,fri", created_at=start)
+        scheduled = m.scheduled_days_between(h, start, today)
+        comps = [Completion(habit_id=1, date=d) for d in scheduled]
+        cur, best = m.compute_streaks(h, comps, today=today)
+        assert cur == len(scheduled)
+        assert best == len(scheduled)

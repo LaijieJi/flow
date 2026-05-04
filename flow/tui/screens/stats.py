@@ -14,7 +14,16 @@ from textual.widgets import DataTable, Footer, Header, Label
 
 from ... import db
 from ...models import Completion, Habit
-from ...momentum import completion_strength, compute_momentum, Momentum
+from ...momentum import (
+    completion_strength,
+    compute_momentum,
+    compute_streaks,
+    Momentum,
+    rolling_completion_rate,
+    scheduled_days_between,
+    skipped_dates,
+    strengths_by_date,
+)
 from ..widgets.completion_grid import CompletionGrid
 from ..widgets.navbar import NavBar
 
@@ -41,6 +50,17 @@ def _rate_tier(rate: float) -> str:
 
 def _trend_color(arrow: str) -> str:
     return {"↗": "green", "↘": "red"}.get(arrow, "dim")
+
+
+def _streak_cell(current: int, best: int) -> Text:
+    cell = Text()
+    if current == 0 and best == 0:
+        cell.append("—", style="dim")
+        return cell
+    style = "green" if best > 0 and current >= best else "default"
+    cell.append(str(current), style=style)
+    cell.append(f"/{best}", style="dim")
+    return cell
 
 
 def render_sparkline(
@@ -107,7 +127,10 @@ class StatsScreen(Screen):
         align: center top;
     }
     #stats-title {
-        margin: 1 2;
+        margin: 1 2 0 2;
+    }
+    #stats-summary {
+        margin: 0 2 1 2;
     }
     DataTable {
         margin: 0 2;
@@ -143,6 +166,7 @@ class StatsScreen(Screen):
         yield Header(show_clock=False)
         yield NavBar(current="stats")
         yield Label("stats — last 30 days", id="stats-title")
+        yield Label("", id="stats-summary")
         yield DataTable(id="stats-table", cursor_type="row", zebra_stripes=False)
         yield CompletionGrid(id="grid")
         yield Footer()
@@ -150,7 +174,9 @@ class StatsScreen(Screen):
     def on_mount(self) -> None:
         self.title = "flow stats"
         table = self.query_one(DataTable)
-        table.add_columns("habit", f"last {SPARK_DAYS}", "score", "trend", "rate")
+        table.add_columns(
+            "habit", f"last {SPARK_DAYS}", "score", "trend", "streak", "rate"
+        )
         self._load()
         if self.watch_interval is not None:
             self._watch_timer = self.set_interval(self.watch_interval, self._load)
@@ -185,6 +211,10 @@ class StatsScreen(Screen):
             spark = render_sparkline(h, self._completions[h.id], today=self.today)
             score_cell = Text(f"{mom.score:.0f}", style=_score_tier(mom.score))
             trend_cell = Text(mom.trend, style=_trend_color(mom.trend))
+            cur, best = compute_streaks(
+                h, self._completions[h.id], today=self.today
+            )
+            streak_cell = _streak_cell(cur, best)
             rate_cell = Text(
                 f"{mom.completion_rate:.0%}", style=_rate_tier(mom.completion_rate)
             )
@@ -193,9 +223,12 @@ class StatsScreen(Screen):
                 spark,
                 score_cell,
                 trend_cell,
+                streak_cell,
                 rate_cell,
                 key=str(h.id),
             )
+
+        self._render_summary()
 
         if not self.habits:
             return
@@ -223,6 +256,88 @@ class StatsScreen(Screen):
         self.query_one(CompletionGrid).set_habit(
             h, self._completions[h.id], today=self.today
         )
+
+    def _render_summary(self) -> None:
+        label = self.query_one("#stats-summary", Label)
+        active = [h for h in self.habits if not h.is_archived]
+        if not active:
+            label.update("")
+            return
+
+        today = self.today
+        last_week_ref = today - timedelta(days=7)
+
+        sched_today = [h for h in active if h.is_scheduled_on(today)]
+        done_today = 0
+        skipped_today = 0
+        for h in sched_today:
+            c = next(
+                (c for c in self._completions[h.id] if c.date == today), None
+            )
+            if c is None:
+                continue
+            if c.is_skipped:
+                skipped_today += 1
+                continue
+            if completion_strength(c.value, h.target) > 0:
+                done_today += 1
+        eff_sched = len(sched_today) - skipped_today
+
+        declining = sum(
+            1 for h in active if self._momentums[h.id].trend == "↘"
+        )
+
+        rates_now: list[float] = []
+        rates_prev: list[float] = []
+        for h in active:
+            comps = self._completions[h.id]
+            scheduled_all = scheduled_days_between(h, h.created_at, today)
+            skips = skipped_dates(comps)
+            scheduled_eff = [d for d in scheduled_all if d not in skips]
+            strengths = strengths_by_date(comps, h.target)
+            rates_now.append(
+                rolling_completion_rate(strengths, scheduled_eff, 7, today)
+            )
+            rates_prev.append(
+                rolling_completion_rate(
+                    strengths, scheduled_eff, 7, last_week_ref
+                )
+            )
+
+        out = Text()
+        out.append("Today ", style="dim")
+        if eff_sched > 0:
+            pct = done_today / eff_sched * 100
+            tier = _rate_tier(done_today / eff_sched)
+            out.append(f"{done_today}/{eff_sched}", style=tier)
+            out.append(f" ({pct:.0f}%)", style="dim")
+            if skipped_today:
+                out.append(f" · {skipped_today} skipped", style="yellow dim")
+        else:
+            out.append("nothing scheduled", style="dim")
+
+        out.append("   ")
+        out.append("At risk ", style="dim")
+        if declining:
+            out.append(f"{declining} ↘", style="red")
+        else:
+            out.append("0", style="green")
+
+        if rates_now:
+            avg_now = sum(rates_now) / len(rates_now) * 100
+            avg_prev = sum(rates_prev) / len(rates_prev) * 100
+            delta = avg_now - avg_prev
+            out.append("   ")
+            out.append("Week ", style="dim")
+            out.append(f"{avg_now:.0f}%", style=_rate_tier(avg_now / 100))
+            arrow = "↗" if delta > 2 else "↘" if delta < -2 else "→"
+            color = _trend_color(arrow)
+            sign = "+" if delta >= 0 else ""
+            out.append(" (", style="dim")
+            out.append(f"{sign}{delta:.0f}pts {arrow}", style=color)
+            out.append(")", style="dim")
+
+        label.update(out)
 
     # -- actions ---------------------------------------------------------------
 

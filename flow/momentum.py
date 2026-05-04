@@ -159,6 +159,51 @@ def rolling_completion_rate(
     return total / len(in_window)
 
 
+# ---- streaks ------------------------------------------------------------------
+
+
+def compute_streaks(
+    habit: Habit,
+    completions: Iterable[Completion],
+    today: date | None = None,
+) -> tuple[int, int]:
+    """Return (current_streak, best_streak) over the habit's scheduled days.
+
+    A scheduled day counts toward the streak if its completion strength > 0.
+    Skipped days don't break the streak (they're excluded from the schedule).
+    A scheduled `today` with no progress yet is excluded from the current
+    streak so an unfinished day doesn't visually reset the count mid-day."""
+    today = today if today is not None else date.today()
+    comps = list(completions)
+    scheduled_all = scheduled_days_between(habit, habit.created_at, today)
+    skips = skipped_dates(comps)
+    scheduled = [d for d in scheduled_all if d not in skips]
+    if not scheduled:
+        return 0, 0
+    strengths = strengths_by_date(comps, habit.target)
+
+    tail = scheduled
+    if tail[-1] == today and strengths.get(today, 0.0) <= 0:
+        tail = tail[:-1]
+    current = 0
+    for d in reversed(tail):
+        if strengths.get(d, 0.0) > 0:
+            current += 1
+        else:
+            break
+
+    best = 0
+    run = 0
+    for d in scheduled:
+        if strengths.get(d, 0.0) > 0:
+            run += 1
+            if run > best:
+                best = run
+        else:
+            run = 0
+    return current, best
+
+
 # ---- aggregate ----------------------------------------------------------------
 
 
