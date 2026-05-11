@@ -27,6 +27,7 @@ class LogScreen(Screen):
         Binding("R", "nav_review", "Review", show=False),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
+        Binding("question_mark", "show_bindings", "Keys", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -144,6 +145,9 @@ class LogScreen(Screen):
         from .help import HelpScreen
 
         self.app.push_screen(HelpScreen())
+
+    def action_show_bindings(self) -> None:
+        self.app.show_bindings(self)
 
     def action_shorter(self) -> None:
         self.days = max(7, self.days - 7)

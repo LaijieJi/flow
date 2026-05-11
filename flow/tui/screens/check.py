@@ -70,6 +70,7 @@ class CheckScreen(Screen):
         Binding("e", "edit_habit", "Edit"),
         Binding("x", "archive_habit", "Archive"),
         Binding("h", "help", "Help"),
+        Binding("question_mark", "show_bindings", "Keys", show=False),
         # Hidden from the footer to keep it readable — all documented in `h`.
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
@@ -551,6 +552,9 @@ class CheckScreen(Screen):
         from .help import HelpScreen
 
         self.app.push_screen(HelpScreen())
+
+    def action_show_bindings(self) -> None:
+        self.app.show_bindings(self)
 
     def action_quit(self) -> None:
         self.app.exit()

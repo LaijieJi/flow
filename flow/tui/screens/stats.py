@@ -118,6 +118,7 @@ class StatsScreen(Screen):
         Binding("A", "toggle_archived", "Toggle archived"),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
+        Binding("question_mark", "show_bindings", "Keys", show=False),
         Binding("escape", "back", "Back", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -399,6 +400,9 @@ class StatsScreen(Screen):
         from .help import HelpScreen
 
         self.app.push_screen(HelpScreen())
+
+    def action_show_bindings(self) -> None:
+        self.app.show_bindings(self)
 
     def action_quit(self) -> None:
         self.app.exit()

@@ -39,6 +39,7 @@ class ReviewScreen(Screen):
         Binding("l", "nav_log", "Log", show=False),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
+        Binding("question_mark", "show_bindings", "Keys", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -222,3 +223,6 @@ class ReviewScreen(Screen):
         from .help import HelpScreen
 
         self.app.push_screen(HelpScreen())
+
+    def action_show_bindings(self) -> None:
+        self.app.show_bindings(self)

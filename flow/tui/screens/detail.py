@@ -17,6 +17,7 @@ from ...models import Habit
 from ...momentum import compute_momentum
 from ...review import habit_score_sparkline
 from ..widgets.completion_grid import CompletionGrid
+from ..widgets.time_of_day import TimeOfDayStrip
 from ..widgets.year_heatmap import YearHeatmap
 from .edit_habit import EditHabitScreen
 
@@ -33,6 +34,7 @@ class DetailScreen(Screen):
         Binding("R", "nav_review", "Review", show=False),
         Binding("t", "toggle_theme", "Theme"),
         Binding("h", "help", "Help"),
+        Binding("question_mark", "show_bindings", "Keys", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -51,6 +53,11 @@ class DetailScreen(Screen):
         padding: 0 1;
     }
     YearHeatmap {
+        margin: 0 2 1 2;
+        border: round $accent;
+        padding: 0 1;
+    }
+    TimeOfDayStrip {
         margin: 0 2 1 2;
         border: round $accent;
         padding: 0 1;
@@ -87,6 +94,7 @@ class DetailScreen(Screen):
         yield Label("", id="detail-sparkline")
         yield CompletionGrid(id="detail-grid")
         yield YearHeatmap(id="detail-year")
+        yield TimeOfDayStrip(id="detail-tod")
         yield Label("recent notes", id="notes-title")
         with VerticalScroll(id="notes-box"):
             yield Static("", id="notes-body")
@@ -164,6 +172,7 @@ class DetailScreen(Screen):
 
         self.query_one(CompletionGrid).set_habit(self.habit, comps, today=self.today)
         self.query_one(YearHeatmap).set_habit(self.habit, comps, today=self.today)
+        self.query_one(TimeOfDayStrip).set_habit(self.habit.name, comps)
 
         notes = sorted(
             (c for c in comps if c.note), key=lambda c: c.date, reverse=True
@@ -207,6 +216,9 @@ class DetailScreen(Screen):
         from .help import HelpScreen
 
         self.app.push_screen(HelpScreen())
+
+    def action_show_bindings(self) -> None:
+        self.app.show_bindings(self)
 
     def action_archive_toggle(self) -> None:
         with db.session(self.db_path) as conn:

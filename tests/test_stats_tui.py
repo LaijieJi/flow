@@ -403,3 +403,66 @@ def test_stats_cli_rejects_missing_habit(
     r = runner.invoke(main, ["stats", "ghost"])
     assert r.exit_code != 0
     assert "no habit matches" in r.output
+
+
+# ---- bindings modal + command palette ----------------------------------------
+
+
+async def test_bindings_modal_opens_on_check_screen(seeded_db: Path) -> None:
+    app = FlowApp(db_path=seeded_db, initial="check", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        from flow.tui.screens.bindings import BindingsScreen
+
+        assert isinstance(app.screen, BindingsScreen)
+
+
+async def test_bindings_modal_lists_screen_actions(seeded_db: Path) -> None:
+    app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        from flow.tui.screens.bindings import BindingsScreen
+
+        assert isinstance(app.screen, BindingsScreen)
+        # The modal's body is built by `_build_body`; verify it surfaces the
+        # source screen's name + at least one of its action bindings.
+        body = app.screen._build_body()
+        assert "stats" in body.lower()
+        assert "Details" in body or "Export" in body
+
+
+async def test_bindings_modal_closes_on_escape(seeded_db: Path) -> None:
+    app = FlowApp(db_path=seeded_db, initial="check", today=date(2026, 4, 13))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        from flow.tui.screens.check import CheckScreen
+
+        assert isinstance(app.screen, CheckScreen)
+
+
+async def test_command_palette_provider_registered(seeded_db: Path) -> None:
+    from flow.tui.commands import FlowCommandProvider
+
+    app = FlowApp(db_path=seeded_db, initial="check", today=date(2026, 4, 13))
+    async with app.run_test():
+        assert FlowCommandProvider in app.COMMANDS
+
+
+async def test_command_provider_search_yields_navigation(seeded_db: Path) -> None:
+    from flow.tui.commands import _commands
+
+    app = FlowApp(db_path=seeded_db, initial="check", today=date(2026, 4, 13))
+    async with app.run_test():
+        commands = _commands(app)
+        labels = [label for label, _, _ in commands]
+        assert "Open stats screen" in labels
+        assert "Toggle theme" in labels
+        assert "Quit" in labels

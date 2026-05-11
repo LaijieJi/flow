@@ -9,6 +9,7 @@ from textual.app import App
 
 from .. import config as _config
 from ..models import Habit
+from .commands import FlowCommandProvider
 
 
 class FlowApp(App):
@@ -17,6 +18,8 @@ class FlowApp(App):
 
     TITLE = "flow"
     SUB_TITLE = "momentum habit tracker"
+
+    COMMANDS = App.COMMANDS | {FlowCommandProvider}
 
     def __init__(
         self,
@@ -102,6 +105,15 @@ class FlowApp(App):
         """Flip dark <-> light and persist so the choice survives restarts."""
         self.dark = not self.dark
         _config.set_value("theme", "dark" if self.dark else "light")
+
+    def show_bindings(self, screen) -> None:
+        """Open the context bindings modal for the given screen. Each screen
+        wires its own `?` action through here so the lookup happens at call
+        time and naturally reflects screen-local BINDINGS."""
+        from .screens.bindings import BindingsScreen
+
+        name = screen.__class__.__name__.removesuffix("Screen").lower()
+        self.push_screen(BindingsScreen(list(screen.BINDINGS), name))
 
     # -- cross-screen navigation -----------------------------------------------
 

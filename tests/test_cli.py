@@ -644,6 +644,71 @@ def test_today_count_format(runner: CliRunner, db_path: Path) -> None:
     assert r.output.strip() == "1/2"
 
 
+# ---- status ------------------------------------------------------------------
+
+
+def test_status_text_no_habits(runner: CliRunner, db_path: Path) -> None:
+    r = runner.invoke(main, ["status"])
+    assert r.exit_code == 0
+    assert "no habits yet" in r.output
+
+
+def test_status_text_summary(runner: CliRunner, db_path: Path) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["status"])
+    assert r.exit_code == 0
+    assert "1/2" in r.output
+    assert "today" in r.output.lower()
+    assert "at risk" in r.output.lower()
+
+
+def test_status_json_shape(runner: CliRunner, db_path: Path) -> None:
+    import json
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["status", "--format", "json"])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["habit_count"] == 2
+    assert payload["scheduled_today"] == 2
+    assert payload["done_today"] == 1
+    assert payload["completion_rate_today"] == 0.5
+    assert {h["name"] for h in payload["habits"]} == {"Exercise", "Read"}
+    by_name = {h["name"]: h for h in payload["habits"]}
+    assert by_name["Exercise"]["done_today"] is True
+    assert by_name["Exercise"]["current_streak"] == 1
+    assert by_name["Read"]["done_today"] is False
+    assert by_name["Read"]["current_streak"] == 0
+
+
+def test_status_json_includes_completed_at(runner: CliRunner, db_path: Path) -> None:
+    import json
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["done", "Exercise"])
+    r = runner.invoke(main, ["status", "--format", "json"])
+    payload = json.loads(r.output)
+    ex = next(h for h in payload["habits"] if h["name"] == "Exercise")
+    assert ex["completed_at"] is not None
+    # Live-stamped completions parse as ISO timestamps.
+    datetime.fromisoformat(ex["completed_at"])
+
+
+def test_status_json_skipped_excluded_from_scheduled(
+    runner: CliRunner, db_path: Path
+) -> None:
+    import json
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["skip", "Read"])
+    r = runner.invoke(main, ["status", "--format", "json"])
+    payload = json.loads(r.output)
+    assert payload["scheduled_today"] == 1  # Read got skipped, excluded
+    assert payload["skipped_today"] == 1
+
+
 # ---- undo --------------------------------------------------------------------
 
 

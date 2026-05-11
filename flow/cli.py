@@ -7,6 +7,7 @@ scripting-friendly: exit codes are stable, output is plain when possible.
 
 from __future__ import annotations
 
+import json as _json
 import random as _random
 import sys
 from datetime import date, datetime, timedelta
@@ -40,6 +41,7 @@ from .models import (
 from .momentum import (
     completion_strength,
     compute_momentum,
+    compute_streaks,
     scheduled_days_between,
 )
 
@@ -1067,6 +1069,134 @@ def _today_summary() -> tuple[str, int, int]:
     if len(remaining) > 3:
         preview += f", +{len(remaining) - 3} more"
     return (f"{done_count}/{total} done — {preview}", done_count, total)
+
+
+@main.command(help="Full status across all habits (text or JSON for scripting).")
+@click.option(
+    "--format",
+    "-F",
+    "fmt",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="'text' = human summary, 'json' = structured payload for scripts",
+)
+def status(fmt: str) -> None:
+    payload = _status_payload()
+    if fmt == "json":
+        click.echo(_json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    _print_status_text(payload)
+
+
+def _status_payload(today: date | None = None) -> dict:
+    """Aggregate every active habit's current state. Mirrors the stats-screen
+    summary band but flattened for non-TUI consumption.
+
+    Returns a JSON-safe dict. Skipped-today habits are excluded from the
+    `scheduled_today` count — same rule as `flow today` and the check screen,
+    so a vacation doesn't leave an unfinishable 'X/Y done' ratio."""
+    today = today if today is not None else date.today()
+    with db.session() as conn:
+        habits = db.list_habits(conn)
+        completions = {h.id: db.completions_for_habit(conn, h.id) for h in habits}
+
+    def _today_row(hid: int) -> Completion | None:
+        return next((c for c in completions[hid] if c.date == today), None)
+
+    scheduled_today = 0
+    done_today = 0
+    skipped_today = 0
+    at_risk = 0
+    longest_streak = 0
+    per_habit: list[dict] = []
+
+    for h in habits:
+        comps = completions[h.id]
+        mom = compute_momentum(h, comps, today=today)
+        cur_streak, best_streak = compute_streaks(h, comps, today=today)
+        c = _today_row(h.id)
+        is_sched = h.is_scheduled_on(today)
+        is_skipped = c is not None and c.is_skipped
+        is_done = (
+            c is not None
+            and not c.is_skipped
+            and completion_strength(c.value, h.target) > 0
+        )
+
+        if is_sched and not is_skipped:
+            scheduled_today += 1
+            if is_done:
+                done_today += 1
+        if is_sched and is_skipped:
+            skipped_today += 1
+        if mom.trend == "↘":
+            at_risk += 1
+        if cur_streak > longest_streak:
+            longest_streak = cur_streak
+
+        per_habit.append(
+            {
+                "name": h.name,
+                "frequency": h.frequency,
+                "scheduled_today": is_sched,
+                "done_today": is_done,
+                "skipped_today": is_skipped,
+                "value": c.value if c else None,
+                "completed_at": (
+                    c.completed_at.isoformat()
+                    if c and c.completed_at is not None
+                    else None
+                ),
+                "score": round(mom.score, 1),
+                "trend": mom.trend,
+                "completion_rate": round(mom.completion_rate, 3),
+                "current_streak": cur_streak,
+                "best_streak": best_streak,
+            }
+        )
+
+    rate = (done_today / scheduled_today) if scheduled_today else 0.0
+    return {
+        "date": today.isoformat(),
+        "habit_count": len(habits),
+        "scheduled_today": scheduled_today,
+        "done_today": done_today,
+        "skipped_today": skipped_today,
+        "completion_rate_today": round(rate, 3),
+        "at_risk": at_risk,
+        "longest_current_streak": longest_streak,
+        "habits": per_habit,
+    }
+
+
+def _print_status_text(p: dict) -> None:
+    """Human-readable rendering of `_status_payload` for terminal use."""
+    console.print(f"[bold]flow status[/bold] [dim]— {p['date']}[/dim]")
+    if p["habit_count"] == 0:
+        console.print("  [dim]no habits yet — try `flow add`[/dim]")
+        return
+    if p["scheduled_today"] == 0 and p["skipped_today"] == 0:
+        console.print("  [dim]nothing scheduled today[/dim]")
+    else:
+        rate_pct = p["completion_rate_today"] * 100
+        line = f"  today: [bold]{p['done_today']}/{p['scheduled_today']}[/bold] done"
+        if p["scheduled_today"]:
+            line += f" [dim]({rate_pct:.0f}%)[/dim]"
+        if p["skipped_today"]:
+            line += f" · [yellow]{p['skipped_today']} skipped[/yellow]"
+        console.print(line)
+
+    risk_color = "red" if p["at_risk"] else "green"
+    console.print(
+        f"  at risk: [{risk_color}]{p['at_risk']}[/{risk_color}] declining"
+    )
+    streak = p["longest_current_streak"]
+    if streak:
+        unit = "day" if streak == 1 else "days"
+        console.print(
+            f"  longest current streak: [bold]{streak}[/bold] {unit}"
+        )
 
 
 @main.command(help="Fire a desktop notification with today's summary (cron target).")
