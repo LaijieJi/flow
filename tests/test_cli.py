@@ -709,6 +709,70 @@ def test_status_json_skipped_excluded_from_scheduled(
     assert payload["skipped_today"] == 1
 
 
+def test_status_watch_rejects_json_format(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["status", "--format", "json", "--watch", "5"])
+    assert r.exit_code != 0
+    assert "watch" in r.output.lower()
+
+
+def test_status_watch_rejects_zero_interval(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    r = runner.invoke(main, ["status", "--watch", "0"])
+    assert r.exit_code != 0
+    assert ">= 1" in r.output
+
+
+def test_status_watch_loop_exits_cleanly_on_interrupt(
+    runner: CliRunner, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify the watch loop is interrupt-safe. Patch `time.sleep` to raise
+    KeyboardInterrupt so we don't actually wait."""
+    runner.invoke(main, ["add", "Exercise"])
+
+    import time
+
+    original_sleep = time.sleep
+
+    def _raise(_seconds: float) -> None:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(time, "sleep", _raise)
+    try:
+        r = runner.invoke(main, ["status", "--watch", "1"])
+    finally:
+        monkeypatch.setattr(time, "sleep", original_sleep)
+    assert r.exit_code == 0
+
+
+def test_status_renderable_includes_watch_hint() -> None:
+    """When `watch_interval` is set, the header must surface a ^C hint so
+    users know how to exit the in-place refresh."""
+    from rich.console import Console
+    from flow.cli import _status_renderable
+
+    payload = {
+        "date": "2026-05-11",
+        "habit_count": 0,
+        "scheduled_today": 0,
+        "done_today": 0,
+        "skipped_today": 0,
+        "completion_rate_today": 0.0,
+        "at_risk": 0,
+        "longest_current_streak": 0,
+        "habits": [],
+    }
+    buf = Console(record=True, width=80)
+    buf.print(_status_renderable(payload, watch_interval=5))
+    rendered = buf.export_text()
+    assert "watching" in rendered
+    assert "^C" in rendered
+
+
 # ---- undo --------------------------------------------------------------------
 
 

@@ -23,11 +23,13 @@ from . import (
     config as _config,
     cron as _cron,
     db,
+    doctor as _doctor,
     export as _export,
     help_text,
     importer as _importer,
     notify as _notify,
     review as _review,
+    templates as _templates,
 )
 from .models import (
     COMPLETION_STATUS_DONE,
@@ -135,7 +137,7 @@ def _parse_optional_date(value: str | None, flag: str) -> date | None:
 
 
 @main.command(help="Add a new habit.")
-@click.argument("name")
+@click.argument("name", required=False)
 @click.option(
     "--frequency",
     "-f",
@@ -160,8 +162,17 @@ def _parse_optional_date(value: str | None, flag: str) -> date | None:
     default=None,
     help=f"momentum smoothing (0.01–1.0, default {Habit.ALPHA_DEFAULT})",
 )
+@click.option(
+    "--template",
+    "-t",
+    "template_key",
+    default=None,
+    help="install a bundled template (see `flow templates`)",
+)
+@click.pass_context
 def add(
-    name: str,
+    ctx: click.Context,
+    name: str | None,
     frequency: str,
     unit: str | None,
     target: float | None,
@@ -169,7 +180,30 @@ def add(
     start_date: str | None,
     end_date: str | None,
     alpha: float | None,
+    template_key: str | None,
 ) -> None:
+    if template_key is not None:
+        tpl = _templates.get_template(template_key)
+        if tpl is None:
+            raise click.ClickException(
+                f"unknown template {template_key!r} — try `flow templates`"
+            )
+        # User-provided CLI values override the template; defaults yield to it.
+        # We detect default vs user-supplied for `--frequency` via Click's
+        # parameter-source API because both produce a non-None string.
+        name = name or tpl.name
+        freq_source = ctx.get_parameter_source("frequency")
+        if freq_source is not None and freq_source.name == "DEFAULT":
+            frequency = tpl.frequency
+        unit = unit or tpl.unit
+        target = target if target is not None else tpl.target
+        description = description or tpl.description
+
+    if name is None:
+        raise click.ClickException(
+            "NAME is required (or pass --template to use a bundled starter)"
+        )
+
     try:
         parse_frequency(frequency)
     except ValueError as e:
@@ -716,6 +750,198 @@ def prune(days: int, dry_run: bool, yes: bool) -> None:
     console.print(f"[red]pruned[/red] {len(candidates)} habit(s)")
 
 
+@main.command(help="List bundled habit templates.")
+def templates() -> None:
+    for tpl in _templates.list_templates():
+        bits = [f"[bold]{tpl.key}[/bold]", tpl.name, f"({tpl.frequency})"]
+        if tpl.target and tpl.unit:
+            bits.append(f"target {tpl.target:g} {tpl.unit}")
+        elif tpl.unit:
+            bits.append(f"unit {tpl.unit}")
+        console.print("  " + "  ".join(bits))
+        if tpl.description:
+            console.print(f"      [dim]{tpl.description}[/dim]")
+
+
+@main.command(help="First-time setup wizard. Picks starter habits from templates.")
+@click.option(
+    "--template",
+    "-t",
+    "preset_keys",
+    multiple=True,
+    help="install named template(s) non-interactively (repeatable)",
+)
+@click.option("--yes", is_flag=True, help="skip the confirmation prompt")
+def init(preset_keys: tuple[str, ...], yes: bool) -> None:
+    with db.session() as conn:
+        existing = db.list_habits(conn, include_archived=True)
+
+    if existing and not preset_keys:
+        console.print(
+            f"flow already has [bold]{len(existing)}[/bold] habit"
+            f"{'s' if len(existing) != 1 else ''} — try `flow add` to add more"
+        )
+        return
+
+    if preset_keys:
+        chosen = _resolve_templates(preset_keys)
+    else:
+        chosen = _run_init_wizard(yes=yes)
+
+    if not chosen:
+        console.print("[dim]nothing installed[/dim]")
+        return
+
+    _install_templates(chosen)
+
+
+def _resolve_templates(keys: tuple[str, ...]) -> list[_templates.Template]:
+    out: list[_templates.Template] = []
+    for key in keys:
+        tpl = _templates.get_template(key)
+        if tpl is None:
+            raise click.ClickException(
+                f"unknown template {key!r} — try `flow templates`"
+            )
+        out.append(tpl)
+    return out
+
+
+def _run_init_wizard(yes: bool) -> list[_templates.Template]:
+    """Interactive picker. Returns the templates the user selected."""
+    catalog = _templates.list_templates()
+    console.print("[bold]Welcome to flow.[/bold]\n")
+    console.print("Pick from these starter habits, or skip and add your own later:\n")
+    for i, tpl in enumerate(catalog, start=1):
+        bits = f"{tpl.name} [dim]({tpl.frequency}"
+        if tpl.target and tpl.unit:
+            bits += f", target {tpl.target:g} {tpl.unit}"
+        bits += ")[/dim]"
+        console.print(f"  {i:>2}. {bits}")
+    console.print(
+        "\n[dim]Enter numbers separated by commas (e.g. 1,3,5), "
+        "'all', or empty to skip:[/dim]"
+    )
+    answer = click.prompt("choice", default="", show_default=False).strip()
+
+    if not answer:
+        return []
+    if answer.lower() == "all":
+        chosen = list(catalog)
+    else:
+        chosen = []
+        for token in answer.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            if not token.isdigit():
+                raise click.ClickException(f"invalid selection: {token!r}")
+            n = int(token)
+            if not 1 <= n <= len(catalog):
+                raise click.ClickException(
+                    f"selection {n} out of range (1..{len(catalog)})"
+                )
+            chosen.append(catalog[n - 1])
+
+    if not yes:
+        names = ", ".join(t.name for t in chosen)
+        if not click.confirm(f"Install {len(chosen)} habit(s): {names}?", default=True):
+            return []
+    return chosen
+
+
+def _install_templates(chosen: list[_templates.Template]) -> None:
+    """Insert templates, skipping any whose name collides case-insensitively
+    with an existing habit. Collisions are warnings, not errors — the wizard
+    should remain re-runnable after partial failures."""
+    with db.session() as conn:
+        existing_names = {
+            h.name.lower()
+            for h in db.list_habits(conn, include_archived=True)
+        }
+        installed: list[str] = []
+        skipped: list[str] = []
+        for tpl in chosen:
+            if tpl.name.lower() in existing_names:
+                skipped.append(tpl.name)
+                continue
+            db.insert_habit(
+                conn,
+                Habit(
+                    name=tpl.name,
+                    frequency=tpl.frequency,
+                    unit=tpl.unit,
+                    target=tpl.target,
+                    description=tpl.description,
+                ),
+            )
+            installed.append(tpl.name)
+            existing_names.add(tpl.name.lower())
+
+    if installed:
+        console.print(
+            f"[green]added[/green] {len(installed)} habit(s): {', '.join(installed)}"
+        )
+    if skipped:
+        console.print(
+            f"[yellow]skipped[/yellow] {len(skipped)} (already exist): "
+            f"{', '.join(skipped)}"
+        )
+    if installed:
+        console.print("[dim]Try `flow check` to start your first day.[/dim]")
+
+
+@main.command(help="Sanity-check the database (orphan rows, dupes, invariants).")
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="apply safe fixes (delete orphans, future-dated rows, clear stamps on skips)",
+)
+@click.option(
+    "--quiet", is_flag=True, help="suppress output if no issues found"
+)
+def doctor(fix: bool, quiet: bool) -> None:
+    # Exit code is deferred until after `db.session()` has committed any
+    # applied fixes — `sys.exit()` raises SystemExit, which is a BaseException
+    # the session's `except Exception:` doesn't catch, but it also bypasses
+    # the post-`yield` `conn.commit()`, silently losing fixes. Set the flag
+    # inside the block, raise the exit after.
+    needs_failure_exit = False
+    with db.session() as conn:
+        issues = _doctor.run_checks(conn)
+
+        if not issues:
+            if not quiet:
+                console.print("[green]✓[/green] no issues found")
+            return
+
+        for issue in issues:
+            marker = "[yellow]⚠[/yellow]" if issue.fixable else "[red]✗[/red]"
+            console.print(f"{marker} [bold]{issue.code}[/bold]: {issue.summary}")
+            if issue.detail:
+                console.print(f"  [dim]{issue.detail}[/dim]")
+
+        if fix:
+            fixed = _doctor.apply_fixes(conn, issues)
+            for code, n in fixed.items():
+                console.print(f"  [green]fixed {code}:[/green] {n} row(s)")
+            unfixable = [i for i in issues if not i.fixable]
+            if unfixable:
+                console.print(
+                    f"[yellow]{len(unfixable)} issue(s) need manual review.[/yellow]"
+                )
+                needs_failure_exit = True
+        else:
+            console.print(
+                f"\n[red]{len(issues)} issue(s) found.[/red] "
+                f"Re-run with --fix to apply safe repairs."
+            )
+            needs_failure_exit = True
+
+    if needs_failure_exit:
+        sys.exit(1)
+
+
 @main.command(help="Archive a habit (soft delete, data preserved).")
 @click.argument("habit")
 def archive(habit: str) -> None:
@@ -1081,12 +1307,47 @@ def _today_summary() -> tuple[str, int, int]:
     show_default=True,
     help="'text' = human summary, 'json' = structured payload for scripts",
 )
-def status(fmt: str) -> None:
+@click.option(
+    "--watch",
+    type=int,
+    default=None,
+    metavar="N",
+    help="refresh every N seconds (text format only; ^C to exit)",
+)
+def status(fmt: str, watch: int | None) -> None:
+    if watch is not None:
+        if fmt == "json":
+            raise click.ClickException("--watch is only supported with --format text")
+        if watch < 1:
+            raise click.ClickException("--watch interval must be >= 1 second")
+        _watch_status(watch)
+        return
+
     payload = _status_payload()
     if fmt == "json":
         click.echo(_json.dumps(payload, indent=2, ensure_ascii=False))
         return
     _print_status_text(payload)
+
+
+def _watch_status(interval: int) -> None:
+    """Refresh status in place every `interval` seconds. Uses Rich Live so the
+    terminal scrollback stays clean across ticks. Exits on KeyboardInterrupt."""
+    import time
+    from rich.live import Live
+
+    def _build():
+        return _status_renderable(_status_payload(), watch_interval=interval)
+
+    try:
+        with Live(
+            _build(), console=console, refresh_per_second=2, transient=False
+        ) as live:
+            while True:
+                time.sleep(interval)
+                live.update(_build())
+    except KeyboardInterrupt:
+        pass
 
 
 def _status_payload(today: date | None = None) -> dict:
@@ -1170,14 +1431,24 @@ def _status_payload(today: date | None = None) -> dict:
     }
 
 
-def _print_status_text(p: dict) -> None:
-    """Human-readable rendering of `_status_payload` for terminal use."""
-    console.print(f"[bold]flow status[/bold] [dim]— {p['date']}[/dim]")
+def _status_renderable(p: dict, watch_interval: int | None = None):
+    """Compose a Rich renderable for a status payload — shared between the
+    one-shot text path and `--watch`. When `watch_interval` is set, append a
+    footer reminding the user how to exit."""
+    from rich.console import Group
+    from rich.text import Text
+
+    header = f"[bold]flow status[/bold] [dim]— {p['date']}"
+    if watch_interval is not None:
+        header += f" · watching ({watch_interval}s, ^C to exit)"
+    header += "[/dim]"
+    lines: list[Text] = [Text.from_markup(header)]
     if p["habit_count"] == 0:
-        console.print("  [dim]no habits yet — try `flow add`[/dim]")
-        return
+        lines.append(Text.from_markup("  [dim]no habits yet — try `flow add`[/dim]"))
+        return Group(*lines)
+
     if p["scheduled_today"] == 0 and p["skipped_today"] == 0:
-        console.print("  [dim]nothing scheduled today[/dim]")
+        lines.append(Text.from_markup("  [dim]nothing scheduled today[/dim]"))
     else:
         rate_pct = p["completion_rate_today"] * 100
         line = f"  today: [bold]{p['done_today']}/{p['scheduled_today']}[/bold] done"
@@ -1185,18 +1456,27 @@ def _print_status_text(p: dict) -> None:
             line += f" [dim]({rate_pct:.0f}%)[/dim]"
         if p["skipped_today"]:
             line += f" · [yellow]{p['skipped_today']} skipped[/yellow]"
-        console.print(line)
+        lines.append(Text.from_markup(line))
 
     risk_color = "red" if p["at_risk"] else "green"
-    console.print(
-        f"  at risk: [{risk_color}]{p['at_risk']}[/{risk_color}] declining"
+    lines.append(
+        Text.from_markup(
+            f"  at risk: [{risk_color}]{p['at_risk']}[/{risk_color}] declining"
+        )
     )
     streak = p["longest_current_streak"]
     if streak:
         unit = "day" if streak == 1 else "days"
-        console.print(
-            f"  longest current streak: [bold]{streak}[/bold] {unit}"
+        lines.append(
+            Text.from_markup(
+                f"  longest current streak: [bold]{streak}[/bold] {unit}"
+            )
         )
+    return Group(*lines)
+
+
+def _print_status_text(p: dict) -> None:
+    console.print(_status_renderable(p))
 
 
 @main.command(help="Fire a desktop notification with today's summary (cron target).")
