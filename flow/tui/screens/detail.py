@@ -16,10 +16,37 @@ from ... import db
 from ...models import Habit
 from ...momentum import compute_momentum
 from ...review import habit_score_sparkline
+from rich.console import Group
+from rich.markdown import Markdown
+from rich.text import Text
+
 from ..widgets.completion_grid import CompletionGrid
 from ..widgets.time_of_day import TimeOfDayStrip
 from ..widgets.year_heatmap import YearHeatmap
 from .edit_habit import EditHabitScreen
+
+
+def _render_notes(notes):
+    """Compose the notes-box body. The most-recent note gets full Markdown
+    rendering so headings/lists/links display naturally; older notes stay as
+    one-line `date  text` rows for density."""
+    if not notes:
+        return Text("no notes yet", style="dim")
+    parts: list = []
+    newest = notes[0]
+    header = Text()
+    header.append(newest.date.isoformat(), style="dim")
+    parts.append(header)
+    parts.append(Markdown(newest.note or ""))
+    if len(notes) > 1:
+        parts.append(Text(""))
+        parts.append(Text("earlier:", style="dim"))
+        for c in notes[1:]:
+            row = Text()
+            row.append(f"  {c.date.isoformat()}  ", style="dim")
+            row.append(c.note or "")
+            parts.append(row)
+    return Group(*parts)
 
 
 class DetailScreen(Screen):
@@ -125,10 +152,20 @@ class DetailScreen(Screen):
             if paused_until is not None
             else ""
         )
+        # Tracking duration: simple anchor on how long this habit has lived
+        # in the DB. Surfaces longevity at a glance — pairs with the streak
+        # column on stats but answers a different question ("how long have I
+        # been at this?" vs "how long is the current run?").
+        days_tracked = max(0, (self.today - self.habit.created_at).days)
+        tracking_tag = (
+            f"  [dim]· tracking for {days_tracked} day"
+            f"{'s' if days_tracked != 1 else ''}[/dim]"
+        )
         self.query_one("#detail-title", Label).update(
             f"[bold]{self.habit.name}[/bold]  [dim]— {self.habit.frequency}[/dim]"
             + archived_tag
             + paused_tag
+            + tracking_tag
         )
 
         mom = compute_momentum(self.habit, comps, today=self.today)
@@ -177,13 +214,14 @@ class DetailScreen(Screen):
         notes = sorted(
             (c for c in comps if c.note), key=lambda c: c.date, reverse=True
         )[:10]
-        if notes:
-            self.notes_text = "\n".join(
-                f"[dim]{c.date.isoformat()}[/dim]  {c.note}" for c in notes
-            )
-        else:
-            self.notes_text = "[dim]no notes yet[/dim]"
-        self.query_one("#notes-body", Static).update(self.notes_text)
+        # Flat string mirror of the notes payload — keeps test introspection
+        # cheap while the widget itself shows a Rich/Markdown rendering.
+        self.notes_text = (
+            "\n".join(c.note for c in notes if c.note)
+            if notes
+            else "no notes yet"
+        )
+        self.query_one("#notes-body", Static).update(_render_notes(notes))
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

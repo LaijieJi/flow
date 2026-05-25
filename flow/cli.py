@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import (
+    aliases as _aliases,
     backup as _backup,
     config as _config,
     cron as _cron,
@@ -60,13 +61,20 @@ def _resolve_habit(
 ) -> Habit:
     """Resolve a user-typed habit name to a single Habit.
 
-    Matching order (case-insensitive): exact → prefix → substring. Errors on
-    zero or multiple matches at any tier.
-    """
+    Matching order (case-insensitive): alias → exact → prefix → substring.
+    Errors on zero or multiple matches at any tier. Aliases that point to a
+    missing habit fall through to fuzzy matching instead of erroring, so a
+    stale alias never silently blocks normal name resolution."""
     habits = db.list_habits(conn, include_archived=include_archived)
     if not habits:
         raise click.ClickException("no habits exist yet — try `flow add`")
     q = query.strip().lower()
+
+    aliased = _aliases.resolve(q)
+    if aliased is not None:
+        for h in habits:
+            if h.name.lower() == aliased.lower():
+                return h
 
     def _pick(pool: Iterable[Habit], tier: str) -> Habit | None:
         matches = list(pool)
@@ -247,6 +255,34 @@ def add(
 _TIME_UNITS = {"minutes", "minute", "min", "mins", "hours", "hour", "hr", "hrs"}
 
 
+def _parse_smart_value(raw: str) -> tuple[float | None, str | None]:
+    """Parse a positional value/duration string and route it.
+
+    Returns `(value, duration_str)` where exactly one is non-None:
+      - bare numbers ("20", "1.5") → value
+      - anything else (a duration shape: "25m", "1h30m", "1:30") → duration_str
+
+    `float()` succeeds on bare numerics but rejects unit-suffixed strings, so
+    using it as a first filter is enough to distinguish the two cases without
+    duplicating `parse_duration`'s parsing rules."""
+    raw = raw.strip()
+    if not raw:
+        raise click.ClickException("empty value")
+    try:
+        return float(raw), None
+    except ValueError:
+        pass
+    # Validate as a duration here so the user gets a clearer error than the
+    # generic "can't parse" one downstream.
+    try:
+        parse_duration(raw)
+    except ValueError:
+        raise click.ClickException(
+            f"can't parse {raw!r} — expected number or duration (25m, 1h30m, 1:30)"
+        )
+    return None, raw
+
+
 def _value_from_duration(unit: str | None, duration_seconds: int) -> float | None:
     """For time-unit habits, derive a numeric value from a recorded duration.
 
@@ -265,6 +301,7 @@ def _value_from_duration(unit: str | None, duration_seconds: int) -> float | Non
 
 @main.command(help="Mark a habit complete.")
 @click.argument("habit")
+@click.argument("smart", required=False, metavar="[VALUE]")
 @click.option("--value", type=float, default=None, help="numeric value (for target habits)")
 @click.option("--note", default=None, help="short reflection (max 280 chars)")
 @click.option(
@@ -276,6 +313,7 @@ def _value_from_duration(unit: str | None, duration_seconds: int) -> float | Non
 @click.option("--date", "date_str", default=None, help="override completion date")
 def done(
     habit: str,
+    smart: str | None,
     value: float | None,
     note: str | None,
     duration_str: str | None,
@@ -284,6 +322,19 @@ def done(
     on = _parse_date_flag(date_str)
     if note is not None and len(note) > Habit.NOTE_MAX:
         raise click.ClickException(f"note too long (max {Habit.NOTE_MAX} chars)")
+
+    # Smart positional: `flow done Read 20` or `flow done Meditate 25m` —
+    # routes the input to --value or --duration based on shape. Explicit
+    # flags win; if both flags and the positional are given, refuse rather
+    # than guess which the user meant.
+    if smart is not None:
+        if value is not None or duration_str is not None:
+            raise click.ClickException(
+                "positional VALUE conflicts with --value/--duration"
+            )
+        smart_value, smart_duration = _parse_smart_value(smart)
+        value = smart_value
+        duration_str = smart_duration
 
     duration_seconds: int | None = None
     if duration_str is not None:
@@ -748,6 +799,49 @@ def prune(days: int, dry_run: bool, yes: bool) -> None:
         for h in candidates:
             db.delete_habit(conn, h.id)
     console.print(f"[red]pruned[/red] {len(candidates)} habit(s)")
+
+
+@main.group(invoke_without_command=True, help="Manage short-form habit aliases.")
+@click.pass_context
+def alias(ctx: click.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        _alias_list()
+
+
+@alias.command("list", help="Show all configured aliases.")
+def alias_list_cmd() -> None:
+    _alias_list()
+
+
+def _alias_list() -> None:
+    aliases = _aliases.load()
+    if not aliases:
+        console.print("[dim]no aliases yet — try `flow alias set <short> <habit>`[/dim]")
+        return
+    for short, target in sorted(aliases.items()):
+        console.print(f"  [cyan]{short}[/cyan] → {target}")
+
+
+@alias.command("set", help="Add or update an alias.")
+@click.argument("short")
+@click.argument("habit")
+def alias_set_cmd(short: str, habit: str) -> None:
+    # Verify the target habit exists right now so a typo surfaces immediately.
+    # Aliases that go stale later (habit renamed/archived) fall back to fuzzy
+    # match silently — see `_resolve_habit`.
+    with db.session() as conn:
+        h = _resolve_habit(conn, habit, include_archived=True)
+    _aliases.set_alias(short, h.name)
+    console.print(f"[green]aliased[/green] [cyan]{short}[/cyan] → {h.name}")
+
+
+@alias.command("remove", help="Remove an alias.")
+@click.argument("short")
+def alias_remove_cmd(short: str) -> None:
+    if _aliases.remove(short):
+        console.print(f"[red]removed[/red] alias [cyan]{short}[/cyan]")
+    else:
+        raise click.ClickException(f"no alias named {short!r}")
 
 
 @main.command(help="List bundled habit templates.")

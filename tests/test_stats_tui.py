@@ -208,6 +208,81 @@ async def test_detail_screen_no_notes_placeholder(
         assert "no notes" in app.screen.notes_text
 
 
+def _renderable_of(widget):
+    """Pull the underlying renderable out of a Static-derived widget.
+
+    Textual 8.x dropped the public `.renderable` accessor. `widget.visual`
+    is now either a `RichVisual` (wrapping a Rich object, exposed via the
+    private `_renderable` slot) or a `Content` (text/markup, exposing
+    `.plain`). Centralised here so a Textual update only needs one fix."""
+    v = widget.visual
+    inner = getattr(v, "_renderable", None)
+    return inner if inner is not None else v
+
+
+async def test_detail_screen_shows_tracking_for_badge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Title gets a 'tracking for N days' tag derived from created_at."""
+    from textual.widgets import Label
+
+    path = tmp_path / "tracking.db"
+    monkeypatch.setenv("FLOW_DB_PATH", str(path))
+    today = date(2026, 4, 13)
+    with db.session(path) as conn:
+        h = db.insert_habit(
+            conn,
+            Habit(
+                name="Old", frequency="daily", created_at=today - timedelta(days=42)
+            ),
+        )
+    with db.session(path) as conn:
+        old = db.list_habits(conn)[0]
+
+    app = FlowApp(db_path=path, initial="detail", today=today, detail_habit=old)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        title = _renderable_of(app.screen.query_one("#detail-title", Label))
+        text = str(title) if not hasattr(title, "plain") else title.plain
+        assert "tracking for 42 days" in text
+
+
+async def test_detail_screen_renders_markdown_for_newest_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The most-recent note is fed into Rich Markdown; older notes stay
+    one-line. Verifies the renderable type, not the visual output."""
+    from rich.console import Group
+    from rich.markdown import Markdown
+    from textual.widgets import Static
+
+    path = tmp_path / "md.db"
+    monkeypatch.setenv("FLOW_DB_PATH", str(path))
+    today = date(2026, 4, 13)
+    with db.session(path) as conn:
+        h = db.insert_habit(conn, Habit(name="N", frequency="daily"))
+        db.upsert_completion(
+            conn,
+            Completion(habit_id=h.id, date=today, note="# Big idea\n- bullet"),
+        )
+        db.upsert_completion(
+            conn,
+            Completion(
+                habit_id=h.id, date=today - timedelta(days=1), note="earlier text"
+            ),
+        )
+    with db.session(path) as conn:
+        habit = db.list_habits(conn)[0]
+
+    app = FlowApp(db_path=path, initial="detail", today=today, detail_habit=habit)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        body = _renderable_of(app.screen.query_one("#notes-body", Static))
+        assert isinstance(body, Group)
+        # First markdown-typed renderable inside the group is the newest note.
+        assert any(isinstance(r, Markdown) for r in body.renderables)
+
+
 async def test_detail_screen_escape_returns_to_stats(seeded_db: Path) -> None:
     app = FlowApp(db_path=seeded_db, initial="stats", today=date(2026, 4, 13))
     async with app.run_test() as pilot:

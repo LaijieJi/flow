@@ -335,6 +335,62 @@ def test_done_invalid_date_rejected(runner: CliRunner, db_path: Path) -> None:
     assert "invalid" in r.output.lower()
 
 
+def test_done_smart_positional_numeric_sets_value(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Read", "--unit", "pages", "--target", "20"])
+    r = runner.invoke(main, ["done", "Read", "15"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        c = db.completions_for_habit(conn, db.list_habits(conn)[0].id)[0]
+    assert c.value == 15.0
+    assert c.duration_seconds is None
+
+
+def test_done_smart_positional_duration_routes_to_duration(
+    runner: CliRunner, db_path: Path
+) -> None:
+    # Non-time-unit habit + duration positional: stores as duration_seconds,
+    # leaves value untouched.
+    runner.invoke(main, ["add", "Read", "--unit", "pages", "--target", "20"])
+    r = runner.invoke(main, ["done", "Read", "25m"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        c = db.completions_for_habit(conn, db.list_habits(conn)[0].id)[0]
+    assert c.duration_seconds == 25 * 60
+    assert c.value is None
+
+
+def test_done_smart_positional_duration_derives_value_for_time_habit(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Meditate", "--unit", "minutes", "--target", "30"])
+    r = runner.invoke(main, ["done", "Meditate", "25m"])
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        c = db.completions_for_habit(conn, db.list_habits(conn)[0].id)[0]
+    assert c.duration_seconds == 25 * 60
+    assert c.value == 25.0  # derived from duration for minutes-unit habit
+
+
+def test_done_smart_positional_with_explicit_flag_errors(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Read", "--unit", "pages", "--target", "20"])
+    r = runner.invoke(main, ["done", "Read", "15", "--value", "10"])
+    assert r.exit_code != 0
+    assert "conflicts" in r.output
+
+
+def test_done_smart_positional_invalid_rejected(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Read"])
+    r = runner.invoke(main, ["done", "Read", "garbage"])
+    assert r.exit_code != 0
+    assert "can't parse" in r.output
+
+
 def test_done_long_note_rejected(runner: CliRunner, db_path: Path) -> None:
     runner.invoke(main, ["add", "Exercise"])
     r = runner.invoke(main, ["done", "Exercise", "--note", "x" * 281])
