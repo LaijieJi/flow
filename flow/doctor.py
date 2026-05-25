@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date as _date
 from typing import Callable
 
-from .models import VALID_COMPLETION_STATUS, parse_frequency
+from .models import Habit, VALID_COMPLETION_STATUS, parse_frequency
 
 
 @dataclass(frozen=True)
@@ -207,6 +207,101 @@ def check_invalid_frequencies(conn: sqlite3.Connection) -> list[Issue]:
     ]
 
 
+def check_empty_habit_names(conn: sqlite3.Connection) -> list[Issue]:
+    """Names that are empty or whitespace-only — the CLI rejects these at
+    insert, but a hand-edited DB or an import path bug could slip them in.
+    Empty names break fuzzy resolution and the alias subsystem."""
+    rows = conn.execute(
+        "SELECT id, name FROM habits WHERE TRIM(COALESCE(name, '')) = ''"
+    ).fetchall()
+    if not rows:
+        return []
+    sample = ", ".join(f"id={r['id']}" for r in rows[:3])
+    return [
+        Issue(
+            code="empty_habit_name",
+            summary=f"{len(rows)} habits have an empty or whitespace-only name",
+            detail=f"sample: {sample}",
+        )
+    ]
+
+
+def check_invalid_seasonal_windows(conn: sqlite3.Connection) -> list[Issue]:
+    """`end_date < start_date` corrupts scheduling: the habit is never
+    in-season. Insert-time validation rejects this, but stored data can drift
+    via hand edits or import."""
+    rows = conn.execute(
+        "SELECT id, name, start_date, end_date FROM habits "
+        "WHERE start_date IS NOT NULL AND end_date IS NOT NULL "
+        "AND end_date < start_date"
+    ).fetchall()
+    if not rows:
+        return []
+    sample = ", ".join(
+        f"{r['name']} ({r['start_date']}→{r['end_date']})" for r in rows[:3]
+    )
+    return [
+        Issue(
+            code="invalid_seasonal_window",
+            summary=f"{len(rows)} habits have end_date before start_date",
+            detail=f"sample: {sample}",
+        )
+    ]
+
+
+def check_alpha_out_of_range(conn: sqlite3.Connection) -> list[Issue]:
+    """`alpha` must be in [ALPHA_MIN, ALPHA_MAX]. Outside that band, the EMA
+    becomes nonsense (negative weighting, or all-or-nothing decay)."""
+    rows = conn.execute(
+        "SELECT id, name, alpha FROM habits WHERE alpha IS NOT NULL "
+        "AND (alpha < ? OR alpha > ?)",
+        (Habit.ALPHA_MIN, Habit.ALPHA_MAX),
+    ).fetchall()
+    if not rows:
+        return []
+    sample = ", ".join(f"{r['name']}={r['alpha']}" for r in rows[:3])
+    return [
+        Issue(
+            code="alpha_out_of_range",
+            summary=(
+                f"{len(rows)} habits have alpha outside "
+                f"[{Habit.ALPHA_MIN}, {Habit.ALPHA_MAX}]"
+            ),
+            detail=f"sample: {sample}",
+        )
+    ]
+
+
+def check_stale_aliases(conn: sqlite3.Connection) -> list[Issue]:
+    """Aliases pointing at habits that no longer exist. Stale aliases fall
+    through to fuzzy match at runtime (so they aren't a hard error), but they
+    waste mental space — the alias `r → Read` no longer doing what the user
+    expects deserves a visible cleanup signal."""
+    from . import aliases as _aliases
+
+    aliases = _aliases.load()
+    if not aliases:
+        return []
+    rows = conn.execute("SELECT name FROM habits").fetchall()
+    habit_names = {r["name"].lower() for r in rows}
+    stale = sorted(
+        (short, target)
+        for short, target in aliases.items()
+        if target.lower() not in habit_names
+    )
+    if not stale:
+        return []
+    sample = ", ".join(f"{short}→{target}" for short, target in stale[:3])
+    return [
+        Issue(
+            code="stale_alias",
+            summary=f"{len(stale)} alias(es) point at habits that don't exist",
+            detail=f"sample: {sample}",
+            fixable=True,
+        )
+    ]
+
+
 ALL_CHECKS: tuple[CheckFn, ...] = (
     check_schema_version,
     check_orphan_completions,
@@ -216,6 +311,10 @@ ALL_CHECKS: tuple[CheckFn, ...] = (
     check_skip_rows_with_timestamp,
     check_invalid_status,
     check_invalid_frequencies,
+    check_empty_habit_names,
+    check_invalid_seasonal_windows,
+    check_alpha_out_of_range,
+    check_stale_aliases,
 )
 
 
@@ -230,7 +329,7 @@ def apply_fixes(
     conn: sqlite3.Connection, issues: list[Issue], today: _date | None = None
 ) -> dict[str, int]:
     """Apply safe fixes for the fixable issue codes. Returns a per-code count
-    of rows changed."""
+    of rows changed (or aliases removed, in the case of `stale_alias`)."""
     today = today if today is not None else _date.today()
     fixed: dict[str, int] = {}
     for issue in issues:
@@ -253,4 +352,19 @@ def apply_fixes(
                 "WHERE status = 'skipped' AND completed_at IS NOT NULL"
             )
             fixed[issue.code] = cur.rowcount
+        elif issue.code == "stale_alias":
+            from . import aliases as _aliases
+
+            aliases = _aliases.load()
+            rows = conn.execute("SELECT name FROM habits").fetchall()
+            habit_names = {r["name"].lower() for r in rows}
+            keep = {
+                short: target
+                for short, target in aliases.items()
+                if target.lower() in habit_names
+            }
+            removed = len(aliases) - len(keep)
+            if removed:
+                _aliases.save(keep)
+            fixed[issue.code] = removed
     return fixed

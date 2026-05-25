@@ -134,6 +134,110 @@ def test_duplicate_completions_clean_db_is_silent(db_path: Path) -> None:
         assert doctor.check_duplicate_completions(conn) == []
 
 
+def test_empty_habit_name_detected(db_path: Path) -> None:
+    with db.session(db_path) as conn:
+        h = db.insert_habit(conn, Habit(name="Real", frequency="daily"))
+        # Mutate the row to bypass model + insert validation. Mimics what a
+        # bad import path or a hand-edited DB would produce.
+        conn.execute("UPDATE habits SET name = '   ' WHERE id = ?", (h.id,))
+        issues = doctor.check_empty_habit_names(conn)
+    assert len(issues) == 1
+    assert issues[0].code == "empty_habit_name"
+
+
+def test_empty_name_check_ignores_real_habits(db_path: Path) -> None:
+    with db.session(db_path) as conn:
+        db.insert_habit(conn, Habit(name="Real", frequency="daily"))
+        assert doctor.check_empty_habit_names(conn) == []
+
+
+def test_invalid_seasonal_window_detected(db_path: Path) -> None:
+    with db.session(db_path) as conn:
+        h = db.insert_habit(conn, Habit(name="S", frequency="daily"))
+        # Corrupt the dates directly — insert_habit and update_habit both
+        # reject end_date < start_date.
+        conn.execute(
+            "UPDATE habits SET start_date = '2026-06-01', end_date = '2026-05-01' "
+            "WHERE id = ?",
+            (h.id,),
+        )
+        issues = doctor.check_invalid_seasonal_windows(conn)
+    assert len(issues) == 1
+    assert issues[0].code == "invalid_seasonal_window"
+
+
+def test_alpha_out_of_range_detected(db_path: Path) -> None:
+    with db.session(db_path) as conn:
+        h = db.insert_habit(conn, Habit(name="A", frequency="daily"))
+        conn.execute("UPDATE habits SET alpha = 2.5 WHERE id = ?", (h.id,))
+        issues = doctor.check_alpha_out_of_range(conn)
+    assert len(issues) == 1
+    assert issues[0].code == "alpha_out_of_range"
+
+
+def test_alpha_in_range_silent(db_path: Path) -> None:
+    with db.session(db_path) as conn:
+        db.insert_habit(conn, Habit(name="A", frequency="daily", alpha=0.3))
+        assert doctor.check_alpha_out_of_range(conn) == []
+
+
+# ---- stale alias checks (file-based) -----------------------------------------
+
+
+def test_stale_alias_detected(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    aliases_path = tmp_path / "aliases.json"
+    monkeypatch.setenv("FLOW_ALIASES_PATH", str(aliases_path))
+    from flow import aliases as _aliases
+
+    with db.session(db_path) as conn:
+        db.insert_habit(conn, Habit(name="Read", frequency="daily"))
+    _aliases.save({"r": "Read", "g": "Ghost"})
+
+    with db.session(db_path) as conn:
+        issues = doctor.check_stale_aliases(conn)
+
+    assert len(issues) == 1
+    assert issues[0].code == "stale_alias"
+    assert issues[0].fixable
+
+
+def test_stale_alias_silent_when_all_resolve(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    aliases_path = tmp_path / "aliases.json"
+    monkeypatch.setenv("FLOW_ALIASES_PATH", str(aliases_path))
+    from flow import aliases as _aliases
+
+    with db.session(db_path) as conn:
+        db.insert_habit(conn, Habit(name="Read", frequency="daily"))
+    _aliases.save({"r": "Read"})
+
+    with db.session(db_path) as conn:
+        assert doctor.check_stale_aliases(conn) == []
+
+
+def test_apply_fixes_prunes_stale_aliases(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    aliases_path = tmp_path / "aliases.json"
+    monkeypatch.setenv("FLOW_ALIASES_PATH", str(aliases_path))
+    from flow import aliases as _aliases
+
+    with db.session(db_path) as conn:
+        db.insert_habit(conn, Habit(name="Read", frequency="daily"))
+    _aliases.save({"r": "Read", "g": "Ghost", "m": "Missing"})
+
+    with db.session(db_path) as conn:
+        issues = doctor.run_checks(conn)
+        fixed = doctor.apply_fixes(conn, issues)
+
+    assert fixed.get("stale_alias") == 2  # g and m removed
+    remaining = _aliases.load()
+    assert remaining == {"r": "Read"}
+
+
 # ---- fix path ----------------------------------------------------------------
 
 

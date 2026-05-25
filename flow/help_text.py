@@ -6,10 +6,19 @@ from __future__ import annotations
 
 HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     (
+        "First-run setup",
+        [
+            ("flow init", "interactive wizard: pick starter habits from templates"),
+            ("flow init --template reading", "install one or more bundled templates non-interactively"),
+            ("flow templates", "list bundled starter templates (reading, meditation, workout, …)"),
+            ("flow add --template <key>", "install one template, override fields with the usual flags"),
+        ],
+    ),
+    (
         "CLI commands",
         [
             ("flow add <name>", "create a new habit"),
-            ("flow done <habit>", "mark a habit complete (--duration 25m, --date YYYY-MM-DD)"),
+            ("flow done <habit> [VALUE]", "mark complete; positional `25m` or `15` routes to duration/value"),
             ("flow skip <habit>", "mark a day deliberately skipped (vacation/sick/rest)"),
             ("flow pause <habit>", "bulk skip a window (--until DATE | --days N)"),
             ("flow resume <habit>", "clear future skips for a paused habit"),
@@ -21,10 +30,13 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("flow archive <habit>", "soft-delete a habit"),
             ("flow restore <habit>", "bring an archived habit back"),
             ("flow random", "pick a scheduled-but-undone habit"),
-            ("flow today", "one-line summary for shell prompts"),
+            ("flow today [--format count]", "one-line summary for shell prompts"),
+            ("flow status [--format json] [--watch N]", "full status across habits; JSON or live-refresh"),
+            ("flow alias set|remove|list", "short-form habit aliases (e.g. `flow done r`)"),
             ("flow export", "CSV/JSON dump"),
             ("flow import <file>", "load habits/completions from JSON (--conflict skip|overwrite|merge)"),
             ("flow backup", "atomic DB snapshot to ~/.flow/backups/"),
+            ("flow doctor [--fix]", "scan DB for orphans / dupes / invariant violations"),
             ("flow prune --days N", "hard-delete habits archived > N days ago"),
             ("flow week / flow month", "condensed digest for current period"),
             ("flow summary --out week.md", "markdown digest for journaling"),
@@ -38,14 +50,25 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ],
     ),
     (
-        "Navigation (works on every screen)",
+        "Smart input on `flow done`",
+        [
+            ("flow done Read 15", "bare numeric → --value 15"),
+            ("flow done Meditate 25m", "duration shape → --duration 25m (and derives value for time-unit habits)"),
+            ("flow done r 20", "aliases resolve before fuzzy match"),
+            ("(mutually exclusive)", "positional VALUE cannot be combined with --value / --duration"),
+        ],
+    ),
+    (
+        "Navigation (works on every top-level screen)",
         [
             ("c", "jump to check screen"),
             ("s", "jump to stats screen"),
             ("l", "jump to completion log"),
             ("R", "jump to review screen (week / month digest + correlations)"),
             ("t", "toggle light / dark theme"),
-            ("h", "show this help"),
+            ("h", "show this help (full reference)"),
+            ("?", "show this screen's bindings only (compact)"),
+            ("ctrl+\\", "open the command palette (fuzzy command finder)"),
             ("escape", "back / close modal"),
             ("q", "back, or quit from the home screen"),
         ],
@@ -112,6 +135,7 @@ HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
             ("e", "edit habit (alpha too)"),
             ("x", "archive / restore"),
             ("escape / q", "back"),
+            ("(panels)", "score sparkline · 30-day grid · year heatmap · time-of-day strip · recent notes (newest in Markdown)"),
         ],
     ),
     (
