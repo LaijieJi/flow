@@ -12,6 +12,7 @@ from flow.models import Completion, Habit
 from flow.tui.app import FlowApp
 from flow.tui.screens.detail import DetailScreen
 from flow.tui.screens.stats import StatsScreen
+from tests.conftest import renderable_of  # noqa: F401  (used in tests below)
 from flow.tui.widgets.completion_grid import (
     GLYPH_FULL,
     GLYPH_MISS,
@@ -208,18 +209,6 @@ async def test_detail_screen_no_notes_placeholder(
         assert "no notes" in app.screen.notes_text
 
 
-def _renderable_of(widget):
-    """Pull the underlying renderable out of a Static-derived widget.
-
-    Textual 8.x dropped the public `.renderable` accessor. `widget.visual`
-    is now either a `RichVisual` (wrapping a Rich object, exposed via the
-    private `_renderable` slot) or a `Content` (text/markup, exposing
-    `.plain`). Centralised here so a Textual update only needs one fix."""
-    v = widget.visual
-    inner = getattr(v, "_renderable", None)
-    return inner if inner is not None else v
-
-
 async def test_detail_screen_shows_tracking_for_badge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -242,7 +231,7 @@ async def test_detail_screen_shows_tracking_for_badge(
     app = FlowApp(db_path=path, initial="detail", today=today, detail_habit=old)
     async with app.run_test() as pilot:
         await pilot.pause()
-        title = _renderable_of(app.screen.query_one("#detail-title", Label))
+        title = renderable_of(app.screen.query_one("#detail-title", Label))
         text = str(title) if not hasattr(title, "plain") else title.plain
         assert "tracking for 42 days" in text
 
@@ -277,7 +266,7 @@ async def test_detail_screen_renders_markdown_for_newest_note(
     app = FlowApp(db_path=path, initial="detail", today=today, detail_habit=habit)
     async with app.run_test() as pilot:
         await pilot.pause()
-        body = _renderable_of(app.screen.query_one("#notes-body", Static))
+        body = renderable_of(app.screen.query_one("#notes-body", Static))
         assert isinstance(body, Group)
         # First markdown-typed renderable inside the group is the newest note.
         assert any(isinstance(r, Markdown) for r in body.renderables)

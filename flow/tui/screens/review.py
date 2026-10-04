@@ -12,12 +12,12 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ... import db, review as _review
 from ...models import format_duration
 from ..widgets.navbar import NavBar
+from .base import BaseTopScreen
 
 
 def _rate_tier(rate: float) -> str:
@@ -28,7 +28,7 @@ def _rate_tier(rate: float) -> str:
     return "red"
 
 
-class ReviewScreen(Screen):
+class ReviewScreen(BaseTopScreen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("q", "go_back", "Back"),
@@ -150,9 +150,14 @@ class ReviewScreen(Screen):
                     Text(str(r.notes), style="dim") if r.notes else Text(""),
                 )
         else:
+            empty_msg = (
+                "no habits yet — try `flow init` or press `c` to add one"
+                if not habits
+                else "nothing scheduled in this window"
+            )
             table.add_row(
                 Text("—", style="dim"),
-                Text("nothing scheduled", style="dim italic"),
+                Text(empty_msg, style="dim italic"),
                 "",
                 "",
                 "",
@@ -207,22 +212,3 @@ class ReviewScreen(Screen):
         else:
             self.app.navigate_to("check")
 
-    def action_nav_check(self) -> None:
-        self.app.navigate_to("check")
-
-    def action_nav_stats(self) -> None:
-        self.app.navigate_to("stats")
-
-    def action_nav_log(self) -> None:
-        self.app.navigate_to("log")
-
-    def action_toggle_theme(self) -> None:
-        self.app.toggle_theme()
-
-    def action_help(self) -> None:
-        from .help import HelpScreen
-
-        self.app.push_screen(HelpScreen())
-
-    def action_show_bindings(self) -> None:
-        self.app.show_bindings(self)

@@ -41,9 +41,23 @@ If `flow: command not found`, add the install location to your `PATH` (e.g. `~/.
 ## Quick start
 
 ```bash
+flow init                              # interactive wizard — pick from starter templates
+flow                                   # bare command opens the TUI (htop / lazygit pattern)
+```
+
+Prefer to drive it yourself:
+
+```bash
 flow add "Exercise" --frequency daily
 flow add "Read" --frequency weekdays --unit pages --target 20
-flow                # bare command opens the TUI (htop / lazygit pattern)
+```
+
+Or install one bundled template non-interactively:
+
+```bash
+flow templates                         # list available starters
+flow add --template reading            # adds the "Read 20 pages/day" template
+flow init --template reading --template meditation --yes
 ```
 
 Run `flow help` for an in-terminal reference card, or `flow --help` for the command index.
@@ -97,13 +111,17 @@ Top-level screens (`check` / `stats` / `log`) are mutually reachable from a navb
 | `p` / `P` | pomodoro (habit-bound / free-running)               |
 | `c` / `s` / `l` | jump to check / stats / log                   |
 | `t`       | toggle theme                                        |
-| `h`       | help modal                                          |
+| `h`       | full help reference                                 |
+| `?`       | bindings for the current screen (compact)           |
+| `ctrl+\`  | fuzzy command palette                               |
 | `q`       | quit                                                |
 
 ### Mark done from CLI
 
 ```bash
 flow done exercise
+flow done read 15                              # smart positional → --value 15
+flow done meditate 25m                         # smart positional → --duration 25m
 flow done read --value 15 --note "short session"
 flow done exercise --duration 25m              # 25m, 1h30m, 90s, or 1:30
 flow done exercise --date 2026-04-10           # backfill a missed day
@@ -111,9 +129,28 @@ flow undo                                      # reverse the last completion
 flow undo --habit exercise                     # scoped undo
 ```
 
+The positional `VALUE` on `flow done` auto-detects shape: bare numerics route to
+`--value`, anything matching a duration (`25m`, `1h30m`, `1:30`) routes to
+`--duration`. Combining the positional with `--value` / `--duration` is rejected
+rather than guessed at.
+
 For habits with a time unit (`minutes`, `hours`), `--duration` also derives `--value` when one isn't given, so time-based habits ride the same value/target momentum path.
 
 Habit names match by exact → prefix → substring, case-insensitive. `flow done exe` resolves to `Exercise` if it's unambiguous.
+
+### Aliases
+
+Short-form names for habits you log often. Stored at `~/.flow/aliases.json`
+(override via `FLOW_ALIASES_PATH`).
+
+```bash
+flow alias set r Read                  # `flow done r` now resolves to Read
+flow alias list                        # show configured aliases
+flow alias remove r
+```
+
+Aliases resolve before the fuzzy matcher, so a typo like `flow done r 20`
+still works the same as `flow done Read 20`.
 
 ### View momentum
 
@@ -125,6 +162,9 @@ flow stats                 # full TUI dashboard with 30-day grid
 flow stats read            # drill into one habit (grid + recent notes)
 flow today                 # one-line summary for shell prompts
 flow today --format count  # just "3/5"
+flow status                # multi-line: today + at-risk + longest streak
+flow status --format json  # structured payload for scripting / dashboards
+flow status --watch 30     # live-refresh every 30s (text only; ^C to exit)
 ```
 
 ```
@@ -136,6 +176,8 @@ Meditate             65       ↘      60%
 ```
 
 In `flow stats`: `j`/`k` select a habit, `enter` drills down, `escape` backs out, `A` reveals archived, `E` exports, `l` opens the log, `q` quits.
+
+The **detail screen** (drill-down) shows: score sparkline (12w) · momentum summary with last-done timestamp · 30-day grid · year heatmap (GitHub-style) · time-of-day strip (24 hour buckets) · recent notes (newest rendered as Markdown).
 
 ### Pomodoro
 
@@ -177,7 +219,15 @@ flow import snapshot.json --conflict overwrite  # replace metadata + completions
 
 flow prune --days 90 --dry-run               # see what would be hard-deleted
 flow prune --days 90                         # delete habits archived ≥ 90 days ago
+
+flow doctor                                  # scan DB for orphan rows, dupes, invariant breaks
+flow doctor --fix                            # apply safe repairs (delete orphans, clear bad stamps)
+flow doctor --quiet                          # silent unless issues found (cron-friendly)
 ```
+
+`flow doctor` is most useful after a manual edit or a git-sync conflict that
+left the DB in a state the live app would never produce. The default report
+exits non-zero so scripts can wire it into CI checks.
 
 `flow backup` uses SQLite's online backup API, so snapshots are consistent
 even if another flow process is mid-write. It refuses to overwrite an

@@ -14,18 +14,6 @@ from flow.cli import main
 from flow.models import Completion, Habit
 
 
-@pytest.fixture
-def db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "cli.db"
-    monkeypatch.setenv("FLOW_DB_PATH", str(path))
-    return path
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
 # ---- add ----------------------------------------------------------------------
 
 
@@ -389,6 +377,28 @@ def test_done_smart_positional_invalid_rejected(
     r = runner.invoke(main, ["done", "Read", "garbage"])
     assert r.exit_code != 0
     assert "can't parse" in r.output
+
+
+def test_done_suggests_did_you_mean_on_typo(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["add", "Meditate"])
+    r = runner.invoke(main, ["done", "Reed"])
+    assert r.exit_code != 0
+    assert "did you mean" in r.output.lower()
+    assert "Read" in r.output
+
+
+def test_done_no_suggestion_when_nothing_close(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Read"])
+    r = runner.invoke(main, ["done", "xyzqq"])
+    assert r.exit_code != 0
+    assert "no habit matches" in r.output
+    # cutoff prevents nonsense suggestions
+    assert "did you mean" not in r.output.lower()
 
 
 def test_done_long_note_rejected(runner: CliRunner, db_path: Path) -> None:
@@ -763,6 +773,42 @@ def test_status_json_skipped_excluded_from_scheduled(
     payload = json.loads(r.output)
     assert payload["scheduled_today"] == 1  # Read got skipped, excluded
     assert payload["skipped_today"] == 1
+
+
+def test_status_text_names_streak_leader(
+    runner: CliRunner, db_path: Path
+) -> None:
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["done", "Read"])
+    r = runner.invoke(main, ["status"])
+    assert r.exit_code == 0
+    assert "longest current streak" in r.output
+    assert "Read" in r.output  # leader name surfaces
+
+
+def test_status_json_includes_streak_leader(
+    runner: CliRunner, db_path: Path
+) -> None:
+    import json
+    runner.invoke(main, ["add", "Exercise"])
+    runner.invoke(main, ["add", "Read"])
+    runner.invoke(main, ["done", "Read"])
+    r = runner.invoke(main, ["status", "--format", "json"])
+    payload = json.loads(r.output)
+    assert payload["longest_current_streak"] == 1
+    assert payload["longest_current_streak_habit"] == "Read"
+
+
+def test_status_json_streak_leader_null_when_no_streak(
+    runner: CliRunner, db_path: Path
+) -> None:
+    import json
+    runner.invoke(main, ["add", "Read"])
+    r = runner.invoke(main, ["status", "--format", "json"])
+    payload = json.loads(r.output)
+    assert payload["longest_current_streak"] == 0
+    assert payload["longest_current_streak_habit"] is None
 
 
 def test_status_watch_rejects_json_format(

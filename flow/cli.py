@@ -7,6 +7,7 @@ scripting-friendly: exit codes are stable, output is plain when possible.
 
 from __future__ import annotations
 
+import difflib
 import json as _json
 import random as _random
 import sys
@@ -96,6 +97,15 @@ def _resolve_habit(
     hit = _pick((h for h in habits if q in h.name.lower()), "substring")
     if hit:
         return hit
+    # Soft suggestion via edit distance — cutoff 0.6 is permissive enough to
+    # catch typos like "Reed" → "Read" without spurious matches.
+    names = [h.name for h in habits]
+    suggestions = difflib.get_close_matches(query, names, n=3, cutoff=0.6)
+    if suggestions:
+        hint = ", ".join(repr(s) for s in suggestions)
+        raise click.ClickException(
+            f"no habit matches {query!r} — did you mean {hint}?"
+        )
     raise click.ClickException(f"no habit matches {query!r}")
 
 
@@ -914,13 +924,13 @@ def _run_init_wizard(yes: bool) -> list[_templates.Template]:
         console.print(f"  {i:>2}. {bits}")
     console.print(
         "\n[dim]Enter numbers separated by commas (e.g. 1,3,5), "
-        "'all', or empty to skip:[/dim]"
+        "'a'/'all', or empty to skip:[/dim]"
     )
     answer = click.prompt("choice", default="", show_default=False).strip()
 
     if not answer:
         return []
-    if answer.lower() == "all":
+    if answer.lower() in {"a", "all"}:
         chosen = list(catalog)
     else:
         chosen = []
@@ -1464,6 +1474,7 @@ def _status_payload(today: date | None = None) -> dict:
     skipped_today = 0
     at_risk = 0
     longest_streak = 0
+    longest_streak_habit: str | None = None
     per_habit: list[dict] = []
 
     for h in habits:
@@ -1489,6 +1500,7 @@ def _status_payload(today: date | None = None) -> dict:
             at_risk += 1
         if cur_streak > longest_streak:
             longest_streak = cur_streak
+            longest_streak_habit = h.name
 
         per_habit.append(
             {
@@ -1521,6 +1533,7 @@ def _status_payload(today: date | None = None) -> dict:
         "completion_rate_today": round(rate, 3),
         "at_risk": at_risk,
         "longest_current_streak": longest_streak,
+        "longest_current_streak_habit": longest_streak_habit,
         "habits": per_habit,
     }
 
@@ -1561,9 +1574,11 @@ def _status_renderable(p: dict, watch_interval: int | None = None):
     streak = p["longest_current_streak"]
     if streak:
         unit = "day" if streak == 1 else "days"
+        leader = p.get("longest_current_streak_habit")
+        leader_tag = f" [dim]({leader})[/dim]" if leader else ""
         lines.append(
             Text.from_markup(
-                f"  longest current streak: [bold]{streak}[/bold] {unit}"
+                f"  longest current streak: [bold]{streak}[/bold] {unit}{leader_tag}"
             )
         )
     return Group(*lines)

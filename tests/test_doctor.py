@@ -13,16 +13,6 @@ from flow.cli import main
 from flow.models import Completion, Habit
 
 
-@pytest.fixture
-def db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "flow.db"
-    monkeypatch.setenv("FLOW_DB_PATH", str(path))
-    return path
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
 
 
 # ---- pure checks --------------------------------------------------------------

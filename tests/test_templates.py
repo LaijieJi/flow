@@ -13,18 +13,6 @@ from flow.cli import main
 from flow.models import Habit
 
 
-@pytest.fixture
-def db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "flow.db"
-    monkeypatch.setenv("FLOW_DB_PATH", str(path))
-    return path
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
 # ---- registry shape ----------------------------------------------------------
 
 
@@ -177,6 +165,16 @@ def test_init_yes_skips_confirm(
     assert r.exit_code == 0, r.output
     with db.session(db_path) as conn:
         assert len(db.list_habits(conn)) == 1
+
+
+def test_init_accepts_a_as_all_shortcut(
+    runner: CliRunner, db_path: Path
+) -> None:
+    r = runner.invoke(main, ["init", "--yes"], input="a\n")
+    assert r.exit_code == 0, r.output
+    with db.session(db_path) as conn:
+        # "a" should be treated the same as "all", installing every template.
+        assert len(db.list_habits(conn)) == 8
 
 
 # ---- flow add --template -----------------------------------------------------

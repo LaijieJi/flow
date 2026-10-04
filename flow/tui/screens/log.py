@@ -8,15 +8,15 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ... import db
 from ...models import format_duration
 from ..widgets.navbar import NavBar
+from .base import BaseTopScreen
 
 
-class LogScreen(Screen):
+class LogScreen(BaseTopScreen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("q", "go_back", "Back"),
@@ -76,6 +76,7 @@ class LogScreen(Screen):
         since = self.today - timedelta(days=self.days - 1)
         with db.session(self.db_path) as conn:
             pairs = db.all_completions(conn, since=since)
+            has_any_habits = bool(db.list_habits(conn, include_archived=True))
 
         done = sum(1 for c, _ in pairs if not c.is_skipped)
         skipped = sum(1 for c, _ in pairs if c.is_skipped)
@@ -91,9 +92,14 @@ class LogScreen(Screen):
         table = self.query_one(DataTable)
         table.clear()
         if not pairs:
+            empty_msg = (
+                "no habits yet — try `flow init` or press `c` to add one"
+                if not has_any_habits
+                else "no completions in window — try `]` to widen the range"
+            )
             table.add_row(
                 Text("—", style="dim"),
-                Text("no completions in window", style="dim italic"),
+                Text(empty_msg, style="dim italic"),
                 "",
                 "",
                 "",
@@ -128,26 +134,6 @@ class LogScreen(Screen):
             self.app.pop_screen()
         else:
             self.app.navigate_to("check")
-
-    def action_nav_check(self) -> None:
-        self.app.navigate_to("check")
-
-    def action_nav_stats(self) -> None:
-        self.app.navigate_to("stats")
-
-    def action_nav_review(self) -> None:
-        self.app.navigate_to("review")
-
-    def action_toggle_theme(self) -> None:
-        self.app.toggle_theme()
-
-    def action_help(self) -> None:
-        from .help import HelpScreen
-
-        self.app.push_screen(HelpScreen())
-
-    def action_show_bindings(self) -> None:
-        self.app.show_bindings(self)
 
     def action_shorter(self) -> None:
         self.days = max(7, self.days - 7)

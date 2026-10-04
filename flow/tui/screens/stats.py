@@ -9,7 +9,6 @@ from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Label
 
 from ... import db
@@ -26,6 +25,7 @@ from ...momentum import (
 )
 from ..widgets.completion_grid import CompletionGrid
 from ..widgets.navbar import NavBar
+from .base import BaseTopScreen
 
 
 SPARK_LEVELS = "▁▂▃▄▅▆▇█"
@@ -106,7 +106,7 @@ def render_sparkline(
     return text
 
 
-class StatsScreen(Screen):
+class StatsScreen(BaseTopScreen):
     BINDINGS = [
         Binding("j", "cursor_down", "Down"),
         Binding("k", "cursor_up", "Up"),
@@ -262,7 +262,12 @@ class StatsScreen(Screen):
         label = self.query_one("#stats-summary", Label)
         active = [h for h in self.habits if not h.is_archived]
         if not active:
-            label.update("")
+            if self.habits:  # only archived rows present
+                label.update("[dim]no active habits — restore one with `x` on its detail screen[/dim]")
+            else:
+                label.update(
+                    "[dim]no habits yet — run `flow init` or `flow add <name>`[/dim]"
+                )
             return
 
         today = self.today
@@ -370,15 +375,6 @@ class StatsScreen(Screen):
         )
         self._load()
 
-    def action_nav_check(self) -> None:
-        self.app.navigate_to("check")
-
-    def action_nav_log(self) -> None:
-        self.app.navigate_to("log")
-
-    def action_nav_review(self) -> None:
-        self.app.navigate_to("review")
-
     def action_back(self) -> None:
         if len(self.app.screen_stack) > 1:
             self.app.pop_screen()
@@ -392,17 +388,6 @@ class StatsScreen(Screen):
     def action_toggle_archived(self) -> None:
         self.include_archived = not self.include_archived
         self._load()
-
-    def action_toggle_theme(self) -> None:
-        self.app.toggle_theme()
-
-    def action_help(self) -> None:
-        from .help import HelpScreen
-
-        self.app.push_screen(HelpScreen())
-
-    def action_show_bindings(self) -> None:
-        self.app.show_bindings(self)
 
     def action_quit(self) -> None:
         self.app.exit()

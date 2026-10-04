@@ -14,7 +14,6 @@ from pathlib import Path
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.screen import Screen
 from textual.widgets import Footer, Header, ListItem, ListView, Static
 
 from ... import db
@@ -28,6 +27,7 @@ from ...models import (
 from ..widgets.habit_row import RECENT_DAYS, HabitRow
 from ..widgets.navbar import NavBar
 from .add_habit import AddHabitScreen
+from .base import BaseTopScreen
 from .edit_habit import EditHabitScreen
 from .prompt import PromptScreen
 
@@ -59,7 +59,7 @@ class AddHabitRow(ListItem):
         yield Static("[bold]+[/bold]  Add new habit...", markup=True)
 
 
-class CheckScreen(Screen):
+class CheckScreen(BaseTopScreen):
     BINDINGS = [
         # Shown in the footer — the primary check-in verbs.
         Binding("space", "toggle", "Toggle"),
@@ -532,29 +532,9 @@ class CheckScreen(Screen):
         self.notify(f"undone {h.name} ({c.date.isoformat()})", timeout=2)
         self._reload()
 
-    def action_toggle_theme(self) -> None:
-        self.app.toggle_theme()
-
-    def action_nav_stats(self) -> None:
-        self.app.navigate_to("stats")
-
-    def action_nav_log(self) -> None:
-        self.app.navigate_to("log")
-
-    def action_nav_review(self) -> None:
-        self.app.navigate_to("review")
-
     def action_back(self) -> None:
         if len(self.app.screen_stack) > 1:
             self.app.pop_screen()
-
-    def action_help(self) -> None:
-        from .help import HelpScreen
-
-        self.app.push_screen(HelpScreen())
-
-    def action_show_bindings(self) -> None:
-        self.app.show_bindings(self)
 
     def action_quit(self) -> None:
         self.app.exit()

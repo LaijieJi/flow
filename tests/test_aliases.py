@@ -13,21 +13,6 @@ from flow.cli import main
 from flow.models import Habit
 
 
-@pytest.fixture
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Isolated DB + aliases file per test."""
-    db_path = tmp_path / "flow.db"
-    aliases_path = tmp_path / "aliases.json"
-    monkeypatch.setenv("FLOW_DB_PATH", str(db_path))
-    monkeypatch.setenv("FLOW_ALIASES_PATH", str(aliases_path))
-    return tmp_path
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
 # ---- module surface ----------------------------------------------------------
 
 

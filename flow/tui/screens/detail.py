@@ -9,7 +9,6 @@ from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, Static
 
 from ... import db
@@ -23,6 +22,7 @@ from rich.text import Text
 from ..widgets.completion_grid import CompletionGrid
 from ..widgets.time_of_day import TimeOfDayStrip
 from ..widgets.year_heatmap import YearHeatmap
+from .base import BaseTopScreen
 from .edit_habit import EditHabitScreen
 
 
@@ -49,7 +49,7 @@ def _render_notes(notes):
     return Group(*parts)
 
 
-class DetailScreen(Screen):
+class DetailScreen(BaseTopScreen):
     BINDINGS = [
         Binding("escape", "go_back", "Back"),
         Binding("q", "go_back", "Back"),
@@ -235,28 +235,6 @@ class DetailScreen(Screen):
             self._refresh()
             self.notify(f"updated {result.name}", timeout=2)
 
-    def action_toggle_theme(self) -> None:
-        self.app.toggle_theme()
-
-    def action_nav_check(self) -> None:
-        self.app.navigate_to("check")
-
-    def action_nav_stats(self) -> None:
-        self.app.navigate_to("stats")
-
-    def action_nav_log(self) -> None:
-        self.app.navigate_to("log")
-
-    def action_nav_review(self) -> None:
-        self.app.navigate_to("review")
-
-    def action_help(self) -> None:
-        from .help import HelpScreen
-
-        self.app.push_screen(HelpScreen())
-
-    def action_show_bindings(self) -> None:
-        self.app.show_bindings(self)
 
     def action_archive_toggle(self) -> None:
         with db.session(self.db_path) as conn:
